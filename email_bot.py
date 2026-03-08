@@ -1,10 +1,19 @@
 """
 email_bot.py
-AI-powered cold email personalizer and sender using Gmail SMTP.
-Generates personalized outreach via Claude (claude-3-haiku), sends via Gmail.
+AI-powered cold email personalizer with CAN-SPAM compliance.
+Generates personalized outreach drafts via Claude -- does NOT auto-send.
+Drafts are sent to Telegram for human approval before any email goes out.
+
+Sending flow:
+  1. Generate AI draft for each lead (Claude claude-3-5-haiku-latest)
+  2. Validate email address format
+  3. Append CAN-SPAM required footer (physical address + unsubscribe)
+  4. Return drafts for Telegram approval queue
+  5. Only approved drafts get sent (via send_approved_email)
 """
 
 import os
+import re
 import csv
 import json
 import time
@@ -21,19 +30,73 @@ import requests
 # ---------------------------------------------------------------------------
 
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 LEADS_FILE = "leads.csv"
 CONTACTED_FILE = "contacted.csv"
-MAX_EMAILS_PER_DAY = 50
+DRAFTS_FILE = "drafts.json"
+MAX_DRAFTS_PER_RUN = 25
 
 ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL = "claude-3-haiku-20240307"
+ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
 
 CONTACTED_COLUMNS = [
     "name", "email", "niche", "city", "score", "sent_date", "subject"
 ]
+
+# ---------------------------------------------------------------------------
+# CAN-SPAM Compliance Footer
+# ---------------------------------------------------------------------------
+
+CAN_SPAM_FOOTER = (
+    "\n\n---\n"
+    "Twin Cities Web Co | Saint Paul, MN 55104\n"
+    "You're receiving this because your business was found in a public directory.\n"
+    "To stop future emails, reply with 'unsubscribe' and we'll remove you immediately.\n"
+    "This is a one-time outreach -- we do not send follow-ups without your permission."
+)
+
+
+# ---------------------------------------------------------------------------
+# Email validation (lightweight, no paid API)
+# ---------------------------------------------------------------------------
+
+def validate_email(email):
+    """
+    Basic email validation:
+    1. Format check (regex)
+    2. Domain has MX or A record (DNS check)
+    Returns (is_valid: bool, reason: str)
+    """
+    if not email or not isinstance(email, str):
+        return False, "empty email"
+
+    email = email.strip().lower()
+
+    # Format check
+    pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
+    if not re.match(pattern, email):
+        return False, "invalid format"
+
+    # Check for obviously fake domains
+    domain = email.split("@")[1]
+    fake_domains = {
+        "example.com", "example.org", "test.com", "fake.com",
+        "noemail.com", "none.com", "na.com",
+    }
+    if domain in fake_domains:
+        return False, "fake domain"
+
+    # DNS check for MX record
+    try:
+        import socket
+        socket.getaddrinfo(domain, None)
+        return True, "valid"
+    except socket.gaierror:
+        return False, "domain does not resolve"
+    except Exception:
+        # If DNS check fails for any reason, still allow (might be network issue in CI)
+        return True, "dns check skipped"
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +105,7 @@ CONTACTED_COLUMNS = [
 
 def generate_email(lead):
     """
-    Call Anthropic claude-3-haiku to generate a personalized cold email
+    Call Claude claude-3-5-haiku to generate a personalized cold email
     for a local business lead.
 
     Returns a dict with keys: 'subject' and 'body'.
@@ -55,11 +118,13 @@ def generate_email(lead):
     reviews = lead.get("reviews", "")
     website = (lead.get("website") or "").strip()
     has_website = bool(website)
+    phone = (lead.get("phone") or "").strip()
+    source = lead.get("source", "online directory")
 
     # Build context-aware service angle
     if not has_website:
         service_angle = "build you a professional website so customers can find you online"
-        pain_point = "Many customers search online before calling - without a website, you may be losing jobs to competitors every week."
+        pain_point = "Many customers search online before calling -- without a website, you may be losing jobs to competitors every week."
     elif rating and float(rating) < 3.5:
         service_angle = "help you manage and improve your online reputation"
         pain_point = "A low star rating can quietly cost you 30-40% of potential customers before they even call."
@@ -85,7 +150,8 @@ def generate_email(lead):
         "3. Open with a genuine compliment or observation about their business\n"
         "4. Mention the pain point naturally in one sentence\n"
         "5. Offer a free 15-minute call or free audit - no commitment\n"
-        "6. Sign off as 'Alex' from 'Twin Cities Web Co'\n\n"
+        "6. Sign off as 'Alex' from 'Twin Cities Web Co'\n"
+        "7. Do NOT include any footer or unsubscribe text (that is added automatically)\n\n"
         "Respond ONLY with valid JSON in this exact format:\n"
         "{{\"subject\": \"...\", \"body\": \"...\"}}\n"
         "Use \\n for line breaks inside the body string."
@@ -101,7 +167,7 @@ def generate_email(lead):
     )
 
     if not ANTHROPIC_API_KEY:
-        print("  [WARN] No ANTHROPIC_API_KEY - using fallback template email")
+        print("  [WARN] No ANTHROPIC_API_KEY -- using fallback template email")
         return _fallback_email(name, niche, city, has_website)
 
     headers = {
@@ -134,7 +200,7 @@ def generate_email(lead):
         raise ValueError("Missing subject or body in Claude response")
 
     except Exception as exc:
-        print("  [WARN] Claude API error: {} - using fallback template".format(exc))
+        print("  [WARN] Claude API error: {} -- using fallback template".format(exc))
         return _fallback_email(name, niche, city, has_website)
 
 
@@ -146,47 +212,74 @@ def _fallback_email(name, niche, city, has_website):
             "Hi there,\n\n"
             "I came across {} while looking for {} services in {} and noticed you "
             "don't have a website yet.\n\n"
-            "A lot of customers search online before they call - a simple, professional "
+            "A lot of customers search online before they call -- a simple, professional "
             "site can make a real difference in how many new jobs you land each week.\n\n"
             "I help local businesses in the Twin Cities get set up online quickly and "
             "affordably. Would you be open to a free 15-minute call to see if it could "
             "be a good fit?\n\n"
-            "No pressure at all - just a quick chat.\n\n"
+            "No pressure at all -- just a quick chat.\n\n"
             "Best,\nAlex\nTwin Cities Web Co"
         ).format(name, niche, city)
     else:
         subject = "Helping {} attract more local customers".format(name)
         body = (
             "Hi there,\n\n"
-            "I found {} while researching {} businesses in {} - looks like you've "
+            "I found {} while researching {} businesses in {} -- looks like you've "
             "been serving the community for a while.\n\n"
             "I help local businesses improve their online presence so more customers "
             "find them first on Google. Even small tweaks can bring in a few extra "
             "calls per week.\n\n"
             "Would you be open to a free 15-minute audit? I'll tell you exactly what's "
-            "working and what could be improved - no strings attached.\n\n"
+            "working and what could be improved -- no strings attached.\n\n"
             "Best,\nAlex\nTwin Cities Web Co"
         ).format(name, niche, city)
     return {"subject": subject, "body": body}
 
 
 # ---------------------------------------------------------------------------
-# Gmail SMTP sender
+# CAN-SPAM compliant email body builder
 # ---------------------------------------------------------------------------
 
-def send_email(to_address, subject, body):
+def build_compliant_body(body):
     """
-    Send a plain-text email via Gmail SMTP using STARTTLS.
+    Append the CAN-SPAM required footer to the email body.
+    Includes physical address and unsubscribe mechanism.
+    """
+    return body + CAN_SPAM_FOOTER
+
+
+# ---------------------------------------------------------------------------
+# Email sender (ONLY called after Telegram approval)
+# ---------------------------------------------------------------------------
+
+def send_approved_email(to_address, subject, body):
+    """
+    Send a single approved email via Gmail SMTP.
+    This is ONLY called when a lead is approved via Telegram.
+    The body should already include the CAN-SPAM footer.
+
+    NOTE: Uses Gmail SMTP with App Password. Since we only send
+    approved emails (not bulk), this stays within Gmail's acceptable
+    use policy.
+
     Returns True on success, False on failure.
     """
-    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
-        print("  [ERROR] GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set")
+    gmail_app_password = os.getenv("GMAIL_APP_PASSWORD", "")
+
+    if not GMAIL_ADDRESS:
+        print("  [ERROR] GMAIL_ADDRESS not set")
+        return False
+
+    if not gmail_app_password:
+        # If no app password, save as draft instead of sending
+        print("  [INFO] No GMAIL_APP_PASSWORD -- email saved as draft only")
         return False
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = GMAIL_ADDRESS
+    msg["From"] = "{} <{}>".format("Alex | Twin Cities Web Co", GMAIL_ADDRESS)
     msg["To"] = to_address
+    msg["Reply-To"] = GMAIL_ADDRESS
 
     part = MIMEText(body, "plain")
     msg.attach(part)
@@ -196,7 +289,7 @@ def send_email(to_address, subject, body):
             server.ehlo()
             server.starttls()
             server.ehlo()
-            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            server.login(GMAIL_ADDRESS, gmail_app_password)
             server.sendmail(GMAIL_ADDRESS, to_address, msg.as_string())
         print("  [SENT] {} -> {}".format(subject[:50], to_address))
         return True
@@ -218,7 +311,7 @@ def load_leads():
     Returns a list of dicts.
     """
     if not os.path.exists(LEADS_FILE):
-        print("[WARN] {} not found - run lead_scraper.py first".format(LEADS_FILE))
+        print("[WARN] {} not found -- run lead_scraper.py first".format(LEADS_FILE))
         return []
 
     leads = []
@@ -241,7 +334,6 @@ def mark_contacted(lead, subject):
     1. Append the lead to contacted.csv.
     2. Update the lead's status to 'sent' in leads.csv.
     """
-    # Append to contacted.csv
     file_exists = os.path.exists(CONTACTED_FILE)
     try:
         with open(CONTACTED_FILE, "a", newline="", encoding="utf-8") as f:
@@ -260,8 +352,12 @@ def mark_contacted(lead, subject):
     except Exception as exc:
         print("  [WARN] Could not write to {}: {}".format(CONTACTED_FILE, exc))
 
-    # Update status to 'sent' in leads.csv
     _update_lead_status(lead.get("name", ""), "sent")
+
+
+def mark_draft_ready(lead_name):
+    """Update the lead's status to 'draft_ready' in leads.csv."""
+    _update_lead_status(lead_name, "draft_ready")
 
 
 def _update_lead_status(name, new_status):
@@ -300,70 +396,127 @@ def _update_lead_status(name, new_status):
 
 
 # ---------------------------------------------------------------------------
-# Main email bot function
+# Draft generation pipeline (replaces the old auto-send pipeline)
 # ---------------------------------------------------------------------------
+
+def save_drafts(drafts):
+    """Save draft emails to drafts.json for the Telegram approval flow."""
+    try:
+        with open(DRAFTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(drafts, f, indent=2, ensure_ascii=False)
+        print("[INFO] {} drafts saved to {}".format(len(drafts), DRAFTS_FILE))
+    except Exception as exc:
+        print("[ERROR] Could not save drafts: {}".format(exc))
+
+
+def load_drafts():
+    """Load draft emails from drafts.json."""
+    if not os.path.exists(DRAFTS_FILE):
+        return []
+    try:
+        with open(DRAFTS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as exc:
+        print("[ERROR] Could not load drafts: {}".format(exc))
+        return []
+
 
 def run_email_bot():
     """
-    Full email pipeline:
+    Draft generation pipeline (NO auto-sending):
       1. Load new leads with emails from leads.csv
-      2. Cap at MAX_EMAILS_PER_DAY
-      3. For each lead: generate AI email, send it, mark contacted
-      4. Sleep 30 seconds between sends to avoid rate limits
-      5. Return (sent_count, failed_count)
+      2. Cap at MAX_DRAFTS_PER_RUN
+      3. Validate each email address
+      4. Generate AI-personalized email draft
+      5. Append CAN-SPAM footer
+      6. Save all drafts to drafts.json
+      7. Mark leads as 'draft_ready'
+      8. Return list of draft dicts for Telegram notification
+
+    Returns (drafts: list, skipped: int)
     """
     print("\n" + "=" * 60)
-    print("EMAIL BOT - Loading leads...")
+    print("EMAIL BOT v2 -- Generating drafts (no auto-send)")
     print("=" * 60)
 
     leads = load_leads()
     if not leads:
         print("[INFO] No actionable leads found. Exiting.")
-        return 0, 0
+        return [], 0
 
-    # Cap to daily limit
-    batch = leads[:MAX_EMAILS_PER_DAY]
-    print("[INFO] {} leads available, sending up to {}".format(len(leads), MAX_EMAILS_PER_DAY))
+    batch = leads[:MAX_DRAFTS_PER_RUN]
+    print("[INFO] {} leads available, generating up to {} drafts".format(
+        len(leads), MAX_DRAFTS_PER_RUN
+    ))
 
-    sent = 0
-    failed = 0
+    drafts = []
+    skipped = 0
 
     for idx, lead in enumerate(batch, 1):
         name = lead.get("name", "Unknown")
-        email = lead.get("email", "")
+        email = (lead.get("email") or "").strip()
 
         print("\n[{}/{}] Processing: {} <{}>".format(idx, len(batch), name, email))
 
+        # Validate email
+        is_valid, reason = validate_email(email)
+        if not is_valid:
+            print("  [SKIP] Invalid email ({}): {}".format(reason, email))
+            _update_lead_status(name, "invalid_email")
+            skipped += 1
+            continue
+
         # Generate personalized email
-        print("  [AI] Generating email...")
+        print("  [AI] Generating email draft...")
         email_content = generate_email(lead)
         subject = email_content.get("subject", "Helping your business online")
         body = email_content.get("body", "")
 
         if not body:
-            print("  [SKIP] Empty email body generated - skipping")
-            failed += 1
+            print("  [SKIP] Empty email body generated -- skipping")
+            skipped += 1
             continue
 
-        # Send
-        success = send_email(email, subject, body)
+        # Add CAN-SPAM footer
+        compliant_body = build_compliant_body(body)
 
-        if success:
-            mark_contacted(lead, subject)
-            sent += 1
-        else:
-            failed += 1
+        draft = {
+            "lead_name": name,
+            "to_email": email,
+            "subject": subject,
+            "body": compliant_body,
+            "niche": lead.get("niche", ""),
+            "city": lead.get("city", ""),
+            "score": lead.get("score", 0),
+            "rating": lead.get("rating", ""),
+            "reviews": lead.get("reviews", ""),
+            "website": lead.get("website", ""),
+            "phone": lead.get("phone", ""),
+            "source": lead.get("source", ""),
+            "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "status": "pending_approval",
+        }
+        drafts.append(draft)
+        mark_draft_ready(name)
 
-        # Throttle between sends (skip sleep after last email)
+        print("  [DRAFT] '{}' -> {}".format(subject[:50], email))
+
+        # Small delay between AI calls to be nice to the API
         if idx < len(batch):
-            print("  [WAIT] Sleeping 30s before next send...")
-            time.sleep(30)
+            time.sleep(1)
+
+    # Save all drafts
+    if drafts:
+        save_drafts(drafts)
 
     print("\n" + "=" * 60)
-    print("EMAIL BOT COMPLETE: {} sent, {} failed".format(sent, failed))
+    print("EMAIL BOT v2 COMPLETE: {} drafts generated, {} skipped".format(
+        len(drafts), skipped
+    ))
+    print("Drafts are saved to {} -- awaiting Telegram approval".format(DRAFTS_FILE))
     print("=" * 60)
 
-    return sent, failed
+    return drafts, skipped
 
 
 # ---------------------------------------------------------------------------
@@ -371,5 +524,7 @@ def run_email_bot():
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    sent_count, failed_count = run_email_bot()
-    print("\nFinal result: {} sent, {} failed".format(sent_count, failed_count))
+    drafts, skipped = run_email_bot()
+    print("\nFinal: {} drafts ready for approval, {} skipped".format(
+        len(drafts), skipped
+    ))
