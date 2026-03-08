@@ -1,10 +1,12 @@
 """
 telegram_notify.py
-Telegram notification sender for the lead generation bot.
-Sends pipeline status updates, lead summaries, and error alerts.
+Telegram notification and approval interface for the lead generation bot.
+Sends lead cards with business details, draft previews, and pipeline stats.
+Charles reviews leads in Telegram and approves outreach.
 """
 
 import os
+import json
 import requests
 
 # ---------------------------------------------------------------------------
@@ -14,32 +16,39 @@ import requests
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
+TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}"
 
 
 # ---------------------------------------------------------------------------
-# Core send function
+# Core send functions
 # ---------------------------------------------------------------------------
 
 def send_telegram(message, parse_mode="HTML"):
     """
     Send a message to the configured Telegram chat.
-
-    Args:
-        message (str): The message text. Supports HTML formatting when
-                       parse_mode='HTML' (bold, italic, code, links).
-        parse_mode (str): 'HTML' or 'Markdown'. Defaults to 'HTML'.
-
-    Returns:
-        bool: True if sent successfully, False otherwise.
+    Handles message splitting for long messages (Telegram 4096 char limit).
+    Returns True if sent successfully, False otherwise.
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[TELEGRAM] Missing BOT_TOKEN or CHAT_ID - notification skipped")
+        print("[TELEGRAM] Missing BOT_TOKEN or CHAT_ID -- notification skipped")
         print("[TELEGRAM] Message would have been:")
-        print(message)
+        print(message[:500])
         return False
 
-    url = TELEGRAM_API_BASE.format(token=TELEGRAM_BOT_TOKEN)
+    if len(message) > 4000:
+        chunks = _split_message(message, 4000)
+        success = True
+        for chunk in chunks:
+            if not _send_single(chunk, parse_mode):
+                success = False
+        return success
+    else:
+        return _send_single(message, parse_mode)
+
+
+def _send_single(message, parse_mode="HTML"):
+    """Send a single message (under 4096 chars)."""
+    url = TELEGRAM_API_BASE.format(token=TELEGRAM_BOT_TOKEN) + "/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
@@ -52,46 +61,106 @@ def send_telegram(message, parse_mode="HTML"):
         resp.raise_for_status()
         data = resp.json()
         if data.get("ok"):
-            print("[TELEGRAM] Notification sent successfully")
             return True
         else:
-            print("[TELEGRAM] API returned error: {}".format(data.get("description", "unknown")))
+            print("[TELEGRAM] API error: {}".format(data.get("description", "unknown")))
             return False
     except requests.exceptions.RequestException as exc:
         print("[TELEGRAM] Request failed: {}".format(exc))
         return False
 
 
+def _split_message(text, max_len=4000):
+    """Split a long message into chunks at newline boundaries."""
+    chunks = []
+    while len(text) > max_len:
+        split_at = text.rfind("\n", 0, max_len)
+        if split_at == -1:
+            split_at = max_len
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    if text:
+        chunks.append(text)
+    return chunks
+
+
 # ---------------------------------------------------------------------------
-# Notification helpers
+# Lead card notifications
 # ---------------------------------------------------------------------------
+
+def notify_lead_card(draft):
+    """
+    Send a detailed lead card to Telegram for a single draft.
+    Shows business details + email preview so Charles can decide.
+    """
+    name = draft.get("lead_name", "Unknown")
+    email = draft.get("to_email", "")
+    niche = draft.get("niche", "")
+    city = draft.get("city", "")
+    score = draft.get("score", 0)
+    rating = draft.get("rating", "N/A")
+    reviews = draft.get("reviews", 0)
+    website = draft.get("website", "")
+    phone = draft.get("phone", "")
+    source = draft.get("source", "")
+    subject = draft.get("subject", "")
+    body = draft.get("body", "")
+
+    if int(score) >= 70:
+        badge = "[HOT]"
+    elif int(score) >= 60:
+        badge = "[WARM]"
+    else:
+        badge = "[COOL]"
+
+    web_status = website[:50] if website else "(no website)"
+
+    body_preview = body[:300].replace("\n", " ") if body else "(no preview)"
+    if len(body) > 300:
+        body_preview += "..."
+
+    lines = [
+        "<b>{} LEAD CARD</b>".format(badge),
+        "",
+        "<b>{}</b>".format(name),
+        "Niche: {} | {}".format(niche.title(), city),
+        "Score: <b>{}</b> | {} stars ({} reviews)".format(score, rating, reviews),
+        "Web: {}".format(web_status),
+        "Phone: {}".format(phone or "(none)"),
+        "Email: {}".format(email),
+        "Source: {}".format(source),
+        "",
+        "<b>--- Draft Preview ---</b>",
+        "Subject: <i>{}</i>".format(subject),
+        "",
+        "<code>{}</code>".format(body_preview),
+        "",
+        "Reply with the business name to approve sending.",
+    ]
+
+    message = "\n".join(lines)
+    return send_telegram(message)
+
 
 def notify_leads_found(leads):
     """
-    Send a Telegram summary of how many leads were scraped and
-    list the top 5 by score.
-
-    Args:
-        leads (list): List of lead dicts as returned by run_scraper().
-
-    Returns:
-        bool: True if message sent successfully.
+    Send a Telegram summary of how many leads were scraped.
+    Shows the top 5 by score with key details.
     """
     count = len(leads)
 
     if count == 0:
         message = (
-            "<b>Lead Gen Bot</b> - Scrape Complete\n\n"
+            "<b>Lead Gen Bot v2</b> -- Scrape Complete\n\n"
             "No qualified leads found this run.\n"
             "All results were below the score threshold or already contacted."
         )
         return send_telegram(message)
 
-    # Sort by score descending (should already be sorted, but defensive)
     top5 = sorted(leads, key=lambda x: int(x.get("score", 0)), reverse=True)[:5]
 
     lines = []
-    lines.append("<b>Lead Gen Bot</b> - Scrape Complete")
+    lines.append("<b>Lead Gen Bot v2</b> -- Scrape Complete")
     lines.append("")
     lines.append("Found <b>{}</b> qualified lead(s) today.".format(count))
     lines.append("")
@@ -106,8 +175,9 @@ def notify_leads_found(leads):
         reviews = lead.get("reviews", 0)
         has_email = bool((lead.get("email") or "").strip())
         has_website = bool((lead.get("website") or "").strip())
+        source = lead.get("source", "")
 
-        badge = "[no site]" if not has_website else ""
+        badge = "(no site)" if not has_website else ""
         email_tag = " | has email" if has_email else ""
 
         lines.append("")
@@ -115,8 +185,8 @@ def notify_leads_found(leads):
             "{}. <b>{}</b> {} | Score: {}".format(i, name, badge, score)
         )
         lines.append(
-            "   {} - {} | {} stars ({} reviews){}".format(
-                niche.title(), city, rating, reviews, email_tag
+            "   {} - {} | {} stars ({} reviews){} | src:{}".format(
+                niche.title(), city, rating, reviews, email_tag, source
             )
         )
 
@@ -124,57 +194,87 @@ def notify_leads_found(leads):
     return send_telegram(message)
 
 
-def notify_emails_sent(count, failed):
+# ---------------------------------------------------------------------------
+# Draft batch notification
+# ---------------------------------------------------------------------------
+
+def notify_drafts_ready(drafts, skipped):
     """
-    Send a Telegram summary of how many emails were sent and how many failed.
-
-    Args:
-        count (int): Number of emails successfully sent.
-        failed (int): Number of emails that failed to send.
-
-    Returns:
-        bool: True if message sent successfully.
+    Send a summary of generated drafts, then individual lead cards
+    for each draft awaiting approval.
     """
-    total = count + failed
-    success_rate = int((count / total) * 100) if total > 0 else 0
+    count = len(drafts)
 
-    if count == 0 and failed == 0:
-        status_line = "No emails were queued for sending today."
-    elif failed == 0:
-        status_line = "All <b>{}</b> email(s) sent successfully.".format(count)
-    else:
-        status_line = (
-            "<b>{}</b> sent, <b>{}</b> failed ({} success rate).".format(
-                count, failed, "{}%".format(success_rate)
-            )
+    if count == 0:
+        message = (
+            "<b>Lead Gen Bot v2</b> -- Draft Generation Complete\n\n"
+            "No email drafts were generated this run.\n"
+            "({} leads skipped due to invalid emails or empty drafts)".format(skipped)
         )
+        return send_telegram(message)
 
-    message = (
-        "<b>Lead Gen Bot</b> - Email Run Complete\n\n"
-        + status_line
-        + "\n\nExpect replies within 24-72 hours. "
-        "Check your Gmail inbox for responses."
-    )
+    summary_lines = [
+        "<b>Lead Gen Bot v2</b> -- Drafts Ready for Review",
+        "",
+        "<b>{}</b> email draft(s) generated.".format(count),
+    ]
+    if skipped:
+        summary_lines.append("{} leads skipped (invalid email or empty draft).".format(skipped))
+    summary_lines.append("")
+    summary_lines.append("Individual lead cards coming next...")
+    summary_lines.append("Reply with a business name to approve sending that email.")
+
+    send_telegram("\n".join(summary_lines))
+
+    for draft in drafts:
+        notify_lead_card(draft)
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Pipeline stats notification
+# ---------------------------------------------------------------------------
+
+def notify_pipeline_stats(leads_count, drafts_count, skipped_count,
+                          google_count=0, yelp_count=0):
+    """
+    Send end-of-run pipeline statistics summary.
+    """
+    lines = [
+        "<b>Lead Gen Bot v2</b> -- Pipeline Stats",
+        "",
+        "<b>Scraping:</b>",
+        "  Google Maps results: {}".format(google_count),
+        "  Yelp results: {}".format(yelp_count),
+        "  Qualified leads: {}".format(leads_count),
+        "",
+        "<b>Email Drafts:</b>",
+        "  Drafts generated: {}".format(drafts_count),
+        "  Leads skipped: {}".format(skipped_count),
+        "",
+        "<b>Status:</b> Awaiting your review in Telegram.",
+        "Reply with a business name to approve, or ignore to skip.",
+    ]
+
+    message = "\n".join(lines)
     return send_telegram(message)
 
+
+# ---------------------------------------------------------------------------
+# Error notification
+# ---------------------------------------------------------------------------
 
 def notify_error(error_msg):
     """
     Send a Telegram error alert when the pipeline encounters an exception.
-
-    Args:
-        error_msg (str): The error message or exception string.
-
-    Returns:
-        bool: True if message sent successfully.
     """
-    # Truncate very long error messages to avoid Telegram 4096-char limit
     max_error_len = 800
     if len(error_msg) > max_error_len:
         error_msg = error_msg[:max_error_len] + "... [truncated]"
 
     message = (
-        "<b>Lead Gen Bot - ERROR</b>\n\n"
+        "<b>Lead Gen Bot v2 -- ERROR</b>\n\n"
         "The pipeline encountered an error and may not have completed fully.\n\n"
         "<b>Error details:</b>\n"
         "<code>{}</code>\n\n"
@@ -189,34 +289,28 @@ def notify_error(error_msg):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("Testing Telegram notifications...")
+    print("Testing Telegram notifications v2...")
 
-    # Test leads found notification
-    sample_leads = [
-        {
-            "name": "Acme Plumbing LLC",
-            "score": 70,
-            "niche": "plumber",
-            "city": "Saint Paul",
-            "rating": 3.1,
-            "reviews": 18,
-            "email": "owner@acmeplumbing.example",
-            "website": "",
-        },
-        {
-            "name": "Quick Fix Auto",
-            "score": 65,
-            "niche": "auto repair",
-            "city": "Minneapolis",
-            "rating": 2.8,
-            "reviews": 9,
-            "email": "",
-            "website": "",
-        },
-    ]
+    sample_draft = {
+        "lead_name": "Acme Plumbing LLC",
+        "to_email": "owner@acmeplumbing.example",
+        "subject": "Quick question about Acme Plumbing's online presence",
+        "body": "Hi there,\n\nI came across Acme Plumbing while looking for plumbing services in Saint Paul...\n\nBest,\nAlex\nTwin Cities Web Co",
+        "niche": "plumber",
+        "city": "Saint Paul",
+        "score": 70,
+        "rating": 3.1,
+        "reviews": 18,
+        "website": "",
+        "phone": "+16515550101",
+        "source": "google",
+    }
 
-    notify_leads_found(sample_leads)
-    notify_emails_sent(2, 0)
+    notify_lead_card(sample_draft)
+    notify_pipeline_stats(
+        leads_count=8, drafts_count=5, skipped_count=3,
+        google_count=45, yelp_count=30
+    )
     notify_error("Test error: simulated exception for verification")
 
     print("Done. Check your Telegram chat.")
