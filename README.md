@@ -1,161 +1,160 @@
-# Lead Gen Bot v2
+# LeadGen Bot v5 -- Twin Cities Web Co
 
-Free, automated lead generation and outreach pipeline for local service businesses
-in the Saint Paul / Minneapolis, MN area. Runs on GitHub Actions every weekday morning.
+Automated local business lead generation, AI-powered cold email outreach, and CRM pipeline management for web services in the Twin Cities metro area.
 
-**v2 changes:** Zero paid APIs, CAN-SPAM compliant, Telegram approval flow (no auto-blast).
+## What It Does
 
----
+1. **Scrapes** local business directories (Google Maps, Yelp, Facebook, Bing Places) with fallback chains
+2. **Scores** leads based on website quality, reviews, competition density, and 20+ signals
+3. **Enriches** qualified leads with PageSpeed Insights, BBB ratings, and LinkedIn company detection
+4. **Drafts** personalized cold emails using Claude AI with A/B subject lines and industry-specific templates
+5. **Sends** via Gmail SMTP with warm-up scheduling, send windows, and deliverability best practices
+6. **Tracks** opens (pixel), clicks (link wrapping), replies (IMAP), bounces, and unsubscribes
+7. **Manages** the full pipeline in Google Sheets with batch updates and health checks
+8. **Reports** weekly engagement analytics, A/B test results, conversion funnel, and ROI estimates via Telegram
+9. **Rotates** seasonal niches automatically (snow removal in winter, landscaping in spring, etc.)
 
-## 1. What This Bot Does
-
-1. **Scrapes Google Maps + Yelp** for free using httpx + BeautifulSoup across 10 local
-   business niches (plumber, electrician, auto repair, landscaping, cleaning service,
-   restaurant, hair salon, roofing contractor, HVAC, general contractor).
-2. **Discovers emails** by visiting business websites and extracting contact addresses.
-3. **Scores every result** from 0-100 based on signals: no website, low rating,
-   low review count, email found, phone found. Leads scoring 50+ are kept.
-4. **Deduplicates** against `contacted.csv` so no business is contacted twice.
-5. **Validates email addresses** (format + DNS check) before drafting.
-6. **Generates personalised email drafts** using Claude (claude-3-5-haiku-latest)
-   via the Anthropic API. Drafts adapt based on website status, star rating, and niche.
-7. **Appends CAN-SPAM footer** with physical address and unsubscribe mechanism.
-8. **Sends lead cards to Telegram** with business details and draft previews.
-   You review and approve before any email is sent.
-9. **Sends pipeline stats** summary to Telegram after each run.
-
-**No emails are sent automatically.** Every email requires your Telegram approval.
-
----
-
-## 2. Cost
-
-| Service        | Cost      | Notes                                       |
-|----------------|-----------|---------------------------------------------|
-| Google scraping| **$0**    | Free -- httpx + BeautifulSoup, no API key   |
-| Yelp scraping  | **$0**    | Free -- httpx + BeautifulSoup, no API key   |
-| Anthropic API  | ~$5/month | Claude 3.5 Haiku, ~$0.005 per email draft   |
-| GitHub Actions | **$0**    | 2,000 min/month free (public repo)          |
-| Telegram Bot   | **$0**    | Free, unlimited                             |
-| Gmail SMTP     | **$0**    | Only sends approved emails (low volume)     |
-
-**Total: ~$5/month** (Anthropic only, everything else is free).
-
----
-
-## 3. Setup
-
-### Secrets Required (only 4)
-
-| Secret Name          | Description                                    |
-|----------------------|------------------------------------------------|
-| `ANTHROPIC_API_KEY`  | Anthropic API key for Claude email generation  |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather             |
-| `TELEGRAM_CHAT_ID`   | Your Telegram chat ID (numeric)                |
-| `GMAIL_ADDRESS`      | Your Gmail address for sending approved emails |
-
-### Quick Start
-
-1. Fork or clone this repo.
-2. Add the 4 secrets in **Settings > Secrets and variables > Actions**.
-3. Run the workflow manually from **Actions > Lead Gen Bot v2 > Run workflow**.
-4. Check your Telegram for lead cards and approve/skip.
-
----
-
-## 4. How It Works
+## Architecture
 
 ```
-Scrape (Google + Yelp)
-    |
-    v
-Score & Filter (50+ threshold)
-    |
-    v
-Discover Emails (website scraping)
-    |
-    v
-Validate Emails (format + DNS)
-    |
-    v
-Generate AI Drafts (Claude 3.5 Haiku)
-    |
-    v
-Append CAN-SPAM Footer
-    |
-    v
-Send Lead Cards to Telegram
-    |
-    v
-YOU APPROVE/SKIP in Telegram
-    |
-    v
-Approved emails sent via Gmail
+main.py              -- 10-step pipeline orchestrator
+lead_scraper.py      -- Multi-source scraping, scoring, enrichment (1,345 lines)
+email_bot.py         -- AI drafting, SMTP sending, tracking, A/B testing (1,173 lines)
+telegram_notify.py   -- Rich notifications, approval buttons, dashboards (783 lines)
+sheets_client.py     -- Google Sheets CRM with batch ops (602 lines)
+config.py            -- All configuration, scoring, seasonal calendar (376 lines)
+site/index.html      -- Landing page with Tailwind CSS + Schema.org (309 lines)
 ```
 
----
+**Total: ~5,000 lines of Python + HTML**
 
-## 5. Running Locally
+## Pipeline (10 Steps)
+
+| Step | What | Details |
+|------|------|--------|
+| 1 | Scrape | Google Maps + Yelp + Facebook + Bing with health tracking |
+| 2 | Notify | Telegram summary of leads found |
+| 3 | Draft | Claude AI generates emails with A/B subjects |
+| 4 | Review | Rich lead cards sent to Telegram with Approve/Edit/Skip buttons |
+| 5 | Follow-up | Auto-generates follow-up sequences for stale leads |
+| 5b | Reply Check | IMAP scan for replies, bounces, unsubscribes |
+| 6 | Follow-up Cards | Sends follow-up drafts to Telegram |
+| 7 | Approval | Polls Telegram for button responses |
+| 7b | Send | Gmail SMTP with warm-up limits and send windows |
+| 8 | Stats | Pipeline summary + funnel scorecard |
+| 9 | Engagement | Weekly A/B results + open/click/reply analytics (Sundays) |
+| 10 | Dashboard | Full pipeline dashboard with ROI estimates (Sundays) |
+
+## Features by Phase
+
+### Phase 1: Email Send Pipeline
+- Gmail SMTP with TLS
+- HTML + plain text multipart
+- Per-lead send confirmation via Telegram
+- Unsubscribe detection in replies
+
+### Phase 2: Scraping Hardening
+- SerpAPI fallback when HTML scraping hits captchas
+- Bing Places as secondary source
+- Source health tracking with automatic failover
+- Captcha/block detection and backoff
+
+### Phase 3: Sheets Performance
+- Batch cell updates (1 API call vs 50)
+- Sheet health check at startup (creates missing tabs/columns)
+- Metrics tab for deliverability tracking
+
+### Phase 4: Email Deliverability
+- 7-week warm-up ramp (5 -> 50 emails/day)
+- Optimal send windows (Tue-Thu 9-11am CT)
+- Bounce detection from IMAP
+- SPF/DKIM/DMARC checklist at startup
+- MX record validation (dnspython)
+
+### Phase 5: Open/Click Tracking
+- 1x1 tracking pixel injection
+- Link wrapping for click tracking
+- A/B subject line testing with auto-winner selection
+- Engagement scoring (opens=1, clicks=3, replies=10, meetings=25)
+
+### Phase 6: Landing Page
+- Tailwind CSS dark theme
+- Schema.org LocalBusiness markup
+- 6 sections: hero, services, process, portfolio, testimonials, contact
+- Mobile-responsive with scroll animations
+- GitHub Pages ready
+
+### Phase 7: Geographic Expansion
+- 18 Twin Cities metro cities
+- 22 diverse search queries
+- 12-month seasonal niche calendar
+- 16 industry-specific email templates
+
+### Phase 8: Lead Enrichment
+- PageSpeed Insights API (mobile + desktop scores)
+- BBB rating + accreditation lookup
+- LinkedIn company page detection
+- Score boosting for poor PageSpeed (<50) and BBB A-rated businesses
+
+### Phase 9: Reporting Dashboard
+- Conversion funnel visualization
+- Top niches by reply rate
+- Top cities by volume
+- Enrichment statistics
+- Pipeline velocity (avg days to reply)
+- ROI estimates ($500 avg deal value)
+- Week-over-week comparison
+
+## Setup
+
+### Required Secrets (GitHub Actions)
+
+```
+ANTHROPIC_API_KEY        -- Claude AI for email drafting
+GMAIL_ADDRESS            -- Your Gmail address
+GMAIL_APP_PASSWORD       -- Gmail App Password (not regular password)
+TELEGRAM_BOT_TOKEN       -- Telegram bot token
+TELEGRAM_CHAT_ID         -- Your Telegram chat ID
+GOOGLE_SHEET_ID          -- Google Sheets spreadsheet ID
+GOOGLE_SHEETS_CREDENTIALS -- Service account JSON (stringified)
+SERPAPI_KEY              -- Optional: SerpAPI fallback
+TRACKING_PIXEL_BASE_URL  -- Optional: hosted tracking pixel endpoint
+LINK_TRACKER_BASE_URL    -- Optional: link redirect tracker endpoint
+EMAIL_WARMUP_START       -- ISO date when sending started (e.g., 2026-03-09)
+```
+
+### Install Dependencies
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
+```
 
-# Set environment variables
-export ANTHROPIC_API_KEY="your_key"
-export TELEGRAM_BOT_TOKEN="your_bot_token"
-export TELEGRAM_CHAT_ID="your_chat_id"
-export GMAIL_ADDRESS="you@gmail.com"
+### Run Locally
 
-# Run the full pipeline
+```bash
 python main.py
-
-# Or run individual components:
-python lead_scraper.py      # Scrape and score leads only
-python email_bot.py          # Generate drafts for existing leads
-python telegram_notify.py    # Test Telegram notifications
 ```
 
----
+## Google Sheets Structure
 
-## 6. File Structure
+| Tab | Purpose |
+|-----|--------|
+| Sheet1 (Leads) | All discovered leads with scores, enrichment data, pipeline stage |
+| Contacted | Sent email history with A/B variant, open/click/reply tracking |
+| Config | Custom search queries, cities, niches (overrides fallbacks) |
+| Metrics | Daily deliverability stats (sent, bounced, opened, clicked, replies) |
 
-```
-leadgen-bot/
-  main.py              # Pipeline orchestrator (5-step flow)
-  lead_scraper.py      # Google Maps + Yelp scraper + email discovery + scorer
-  email_bot.py         # AI draft generator (CAN-SPAM compliant, no auto-send)
-  telegram_notify.py   # Lead cards, draft previews, pipeline stats
-  requirements.txt     # Python deps: requests, httpx, beautifulsoup4
-  leads.csv            # Generated: all qualified leads
-  contacted.csv        # Generated: outreach history
-  drafts.json          # Generated: pending email drafts
-  .github/
-    workflows/
-      leadgen.yml      # GitHub Actions schedule (weekdays 8am CT)
-```
+## CAN-SPAM Compliance
 
-> Add `leads.csv`, `contacted.csv`, and `drafts.json` to `.gitignore`.
+- Physical address in footer
+- Clear unsubscribe mechanism (reply 'unsubscribe')
+- Honest subject lines (AI-generated, not misleading)
+- No auto-send -- all emails require Telegram approval
+- Unsubscribe requests automatically honored
 
----
+## License
 
-## 7. CAN-SPAM Compliance
-
-Every email includes:
-- Physical mailing address (Twin Cities Web Co, Saint Paul, MN 55104)
-- Clear identification as commercial email
-- Unsubscribe mechanism (reply with "unsubscribe")
-- Accurate sender information and subject lines
-- One-time outreach notice (no follow-ups without permission)
+MIT
 
 ---
-
-## 8. Expected Results
-
-| Metric                  | Conservative | Optimistic |
-|-------------------------|-------------|------------|
-| Leads scraped per week  | 30          | 150        |
-| Drafts generated/week   | 15          | 75         |
-| Approved emails/week    | 10          | 50         |
-| Reply rate              | 1-2%        | 3-5%       |
-| Monthly revenue (est.)  | $300        | $1,500+    |
+*Built by Charles G / Twin Cities Web Co / Saint Paul, MN*
