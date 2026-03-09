@@ -97,6 +97,62 @@ def _get_worksheet(tab_name):
         return None
 
 
+
+
+# ---------------------------------------------------------------------------
+# Sheet Health Check
+# ---------------------------------------------------------------------------
+
+def ensure_sheet_health():
+    """
+    Verify sheet structure at pipeline start:
+    - Check that required tabs exist (create if missing)
+    - Verify headers are present on Leads and Contacted tabs
+    Returns True if healthy, False on critical failure.
+    """
+    if not _connect():
+        return False
+
+    required_tabs = {
+        SHEET_TAB_LEADS: LEADS_COLUMNS,
+        SHEET_TAB_CONTACTED: CONTACTED_COLUMNS,
+        SHEET_TAB_CONFIG: None,  # No header enforcement for Config
+    }
+
+    try:
+        existing = [ws.title for ws in _spreadsheet.worksheets()]
+
+        for tab_name, expected_headers in required_tabs.items():
+            if tab_name not in existing:
+                print("[SHEETS] Creating missing tab: {}".format(tab_name))
+                ws = _spreadsheet.add_worksheet(title=tab_name, rows=1000, cols=30)
+                if expected_headers:
+                    ws.append_row(expected_headers, value_input_option="RAW")
+                    print("[SHEETS] Added headers to {}".format(tab_name))
+            elif expected_headers:
+                ws = _spreadsheet.worksheet(tab_name)
+                current_headers = ws.row_values(1)
+                if not current_headers:
+                    ws.append_row(expected_headers, value_input_option="RAW")
+                    print("[SHEETS] Added missing headers to {}".format(tab_name))
+                else:
+                    # Check for missing columns and add them
+                    missing = [h for h in expected_headers if h not in current_headers]
+                    if missing:
+                        for col_name in missing:
+                            next_col = len(current_headers) + 1
+                            ws.update_cell(1, next_col, col_name)
+                            current_headers.append(col_name)
+                        print("[SHEETS] Added {} missing columns to {}".format(
+                            len(missing), tab_name))
+
+        print("[SHEETS] Health check passed")
+        return True
+
+    except Exception as e:
+        print("[SHEETS] Health check failed: {}".format(e))
+        return False
+
 # ---------------------------------------------------------------------------
 # Config Tab -- Read search queries, cities, niches
 # ---------------------------------------------------------------------------
@@ -289,7 +345,7 @@ def update_lead_stage(name, city, new_stage):
 
 
 def update_lead_multiple_fields(name, city, updates_dict):
-    """Update multiple fields for a lead at once. updates_dict = {field: value}."""
+    """Update multiple fields for a lead using batch update (single API call)."""
     ws = _get_worksheet(SHEET_TAB_LEADS)
     if not ws:
         return False
@@ -301,16 +357,83 @@ def update_lead_multiple_fields(name, city, updates_dict):
         for i, record in enumerate(records):
             if (str(record.get("name", "")).strip().lower() == name.strip().lower() and
                 str(record.get("city", "")).strip().lower() == city.strip().lower()):
-                row_idx = i + 2
+                row_idx = i + 2  # +1 header, +1 for 1-indexing
+
+                # Build batch update cells
+                cells_to_update = []
                 for field, value in updates_dict.items():
                     if field in headers:
                         col_idx = headers.index(field) + 1
-                        ws.update_cell(row_idx, col_idx, str(value))
+                        cells_to_update.append(
+                            gspread.Cell(row=row_idx, col=col_idx, value=str(value))
+                        )
+
+                if cells_to_update:
+                    ws.update_cells(cells_to_update, value_input_option="USER_ENTERED")
                 return True
 
         return False
     except Exception as e:
         print("[SHEETS] Error updating multiple fields: {}".format(e))
+        return False
+
+
+def batch_update_leads(updates_list):
+    """
+    Batch update multiple leads in a single API call.
+    updates_list = [{"name": ..., "city": ..., "updates": {field: value, ...}}, ...]
+    Much faster than calling update_lead_multiple_fields() in a loop.
+    """
+    ws = _get_worksheet(SHEET_TAB_LEADS)
+    if not ws:
+        return False
+
+    if not updates_list:
+        return True
+
+    try:
+        records = ws.get_all_records()
+        headers = ws.row_values(1)
+
+        # Build index of leads by (name_lower, city_lower) -> row_idx
+        lead_index = {}
+        for i, record in enumerate(records):
+            key = (
+                str(record.get("name", "")).strip().lower(),
+                str(record.get("city", "")).strip().lower(),
+            )
+            lead_index[key] = i + 2  # +1 header, +1 for 1-indexing
+
+        # Collect all cell updates across all leads
+        all_cells = []
+        updated_count = 0
+
+        for update in updates_list:
+            name = update.get("name", "").strip().lower()
+            city = update.get("city", "").strip().lower()
+            row_idx = lead_index.get((name, city))
+
+            if row_idx is None:
+                print("[SHEETS] Lead not found for batch update: {} / {}".format(
+                    update.get("name", "?"), update.get("city", "?")))
+                continue
+
+            for field, value in update.get("updates", {}).items():
+                if field in headers:
+                    col_idx = headers.index(field) + 1
+                    all_cells.append(
+                        gspread.Cell(row=row_idx, col=col_idx, value=str(value))
+                    )
+            updated_count += 1
+
+        if all_cells:
+            ws.update_cells(all_cells, value_input_option="USER_ENTERED")
+            print("[SHEETS] Batch updated {} leads ({} cells) in 1 API call".format(
+                updated_count, len(all_cells)))
+
+        return True
+    except Exception as e:
+        print("[SHEETS] Batch update error: {}".format(e))
         return False
 
 
@@ -420,3 +543,60 @@ def get_funnel_summary():
         "dead": stats.get("dead", 0),
         "total_emails_sent": contacted,
     }
+
+
+# ---------------------------------------------------------------------------
+# Metrics Tab -- Deliverability tracking
+# ---------------------------------------------------------------------------
+
+SHEET_TAB_METRICS = "Metrics"
+METRICS_COLUMNS = [
+    "date", "emails_sent", "emails_bounced", "emails_opened",
+    "emails_clicked", "replies_received", "unsubscribes",
+    "delivery_rate", "open_rate", "click_rate", "reply_rate",
+]
+
+
+def append_metrics(metrics_dict):
+    """Append a daily metrics row to the Metrics tab."""
+    # Ensure Metrics tab exists
+    if not _connect():
+        return False
+
+    try:
+        existing = [ws.title for ws in _spreadsheet.worksheets()]
+        if SHEET_TAB_METRICS not in existing:
+            ws = _spreadsheet.add_worksheet(title=SHEET_TAB_METRICS, rows=1000, cols=15)
+            ws.append_row(METRICS_COLUMNS, value_input_option="RAW")
+            print("[SHEETS] Created Metrics tab with headers")
+        else:
+            ws = _spreadsheet.worksheet(SHEET_TAB_METRICS)
+            if not ws.row_values(1):
+                ws.append_row(METRICS_COLUMNS, value_input_option="RAW")
+
+        row = [str(metrics_dict.get(col, "")) for col in METRICS_COLUMNS]
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        print("[SHEETS] Appended metrics for {}".format(metrics_dict.get("date", "?")))
+        return True
+    except Exception as e:
+        print("[SHEETS] Error appending metrics: {}".format(e))
+        return False
+
+
+def get_metrics_history(days=30):
+    """Get recent metrics rows for trend analysis."""
+    if not _connect():
+        return []
+
+    try:
+        existing = [ws.title for ws in _spreadsheet.worksheets()]
+        if SHEET_TAB_METRICS not in existing:
+            return []
+
+        ws = _spreadsheet.worksheet(SHEET_TAB_METRICS)
+        records = ws.get_all_records()
+        # Return last N days
+        return records[-days:] if len(records) > days else records
+    except Exception as e:
+        print("[SHEETS] Error reading metrics: {}".format(e))
+        return []
