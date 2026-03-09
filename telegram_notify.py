@@ -370,6 +370,339 @@ def notify_error(error_msg, traceback_str=""):
 
 
 # ---------------------------------------------------------------------------
+# Weekly Engagement Report
+# ---------------------------------------------------------------------------
+
+def notify_engagement_report(ab_result, total_sent, total_opens, total_clicks,
+                              total_replies, total_meetings, open_rate, click_rate,
+                              reply_rate, top_subjects=None):
+    """Send weekly engagement analytics report to Telegram."""
+    # A/B test status
+    if ab_result and ab_result.get("winner"):
+        ab_status = "Winner: Variant {} ({} confidence)".format(
+            ab_result["winner"], ab_result.get("confidence", "?"))
+        stats_a = ab_result["stats"]["A"]
+        stats_b = ab_result["stats"]["B"]
+        ab_detail = (
+            "\n\nA/B BREAKDOWN:\n"
+            "Variant A: {} sent | {:.1f}% open | {:.1f}% click | {:.1f}% reply\n"
+            "Variant B: {} sent | {:.1f}% open | {:.1f}% click | {:.1f}% reply"
+        ).format(
+            stats_a["sent"], stats_a.get("open_rate", 0), stats_a.get("click_rate", 0), stats_a.get("reply_rate", 0),
+            stats_b["sent"], stats_b.get("open_rate", 0), stats_b.get("click_rate", 0), stats_b.get("reply_rate", 0),
+        )
+    else:
+        ab_status = "Not enough data yet"
+        ab_detail = ""
+
+    # Top performing subject lines
+    top_section = ""
+    if top_subjects:
+        top_section = "\n\nTOP SUBJECT LINES:\n"
+        for i, subj in enumerate(top_subjects[:5], 1):
+            top_section += "{}. {} ({}% open)\n".format(i, subj["subject"][:50], subj["open_rate"])
+
+    msg = (
+        "<b>WEEKLY ENGAGEMENT REPORT</b>\n"
+        "========================\n\n"
+        "TOTALS:\n"
+        "  Sent: {sent}\n"
+        "  Opens: {opens} ({open_rate:.1f}%)\n"
+        "  Clicks: {clicks} ({click_rate:.1f}%)\n"
+        "  Replies: {replies} ({reply_rate:.1f}%)\n"
+        "  Meetings: {meetings}\n\n"
+        "A/B TEST: {ab_status}{ab_detail}{top_section}\n\n"
+        "BENCHMARKS (cold email avg):\n"
+        "  Open: 15-25% | Click: 2-5% | Reply: 1-5%"
+    ).format(
+        sent=total_sent,
+        opens=total_opens,
+        open_rate=open_rate,
+        clicks=total_clicks,
+        click_rate=click_rate,
+        replies=total_replies,
+        reply_rate=reply_rate,
+        meetings=total_meetings,
+        ab_status=ab_status,
+        ab_detail=ab_detail,
+        top_section=top_section,
+    )
+
+    send_telegram(msg)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Weekly Pipeline Dashboard
+# ---------------------------------------------------------------------------
+
+def build_pipeline_data(all_leads, contacted_leads, week_leads=None, prev_week=None):
+    """Aggregate pipeline data from lead lists for the dashboard.
+
+    Args:
+        all_leads: list of all leads (from Sheets)
+        contacted_leads: list of contacted leads
+        week_leads: list of leads discovered this week (optional)
+        prev_week: dict with last week's stats for comparison (optional)
+
+    Returns dict suitable for notify_weekly_dashboard().
+    """
+    from collections import Counter
+
+    # Total pipeline stages
+    stage_counts = Counter()
+    for lead in all_leads:
+        stage = lead.get("pipeline_stage", "discovered").lower()
+        stage_counts[stage] += 1
+
+    total_pipeline = {
+        "discovered": len(all_leads),
+        "qualified": sum(1 for l in all_leads if float(l.get("lead_score", 0) or 0) >= 50),
+        "contacted": stage_counts.get("contacted", 0) + stage_counts.get("replied", 0) + stage_counts.get("meeting", 0) + stage_counts.get("closed", 0),
+        "replied": stage_counts.get("replied", 0) + stage_counts.get("meeting", 0) + stage_counts.get("closed", 0),
+        "meeting": stage_counts.get("meeting", 0) + stage_counts.get("closed", 0),
+        "closed": stage_counts.get("closed", 0),
+    }
+
+    # This week counts
+    week_leads = week_leads or []
+    this_week_contacts = sum(1 for l in contacted_leads if l.get("contacted_this_week", False))
+    this_week_replies = sum(1 for l in contacted_leads if l.get("replied_this_week", False))
+    this_week_meetings = sum(1 for l in contacted_leads if l.get("meeting_this_week", False))
+
+    # Top niches
+    niche_data = {}
+    for lead in all_leads:
+        niche = lead.get("niche", lead.get("search_query", "other"))
+        if niche not in niche_data:
+            niche_data[niche] = {"leads": 0, "replies": 0}
+        niche_data[niche]["leads"] += 1
+        if lead.get("reply_received", "").lower() in ("yes", "true", "1"):
+            niche_data[niche]["replies"] += 1
+
+    top_niches = []
+    for niche, data in niche_data.items():
+        reply_rate = round(data["replies"] / data["leads"] * 100, 1) if data["leads"] > 0 else 0
+        top_niches.append({"niche": niche, "leads": data["leads"], "replies": data["replies"], "reply_rate": reply_rate})
+    top_niches.sort(key=lambda x: x["reply_rate"], reverse=True)
+
+    # Top cities
+    city_data = {}
+    for lead in all_leads:
+        city = lead.get("city", "Unknown")
+        if city not in city_data:
+            city_data[city] = {"leads": 0, "replies": 0}
+        city_data[city]["leads"] += 1
+        if lead.get("reply_received", "").lower() in ("yes", "true", "1"):
+            city_data[city]["replies"] += 1
+
+    top_cities = [{"city": c, **d} for c, d in city_data.items()]
+    top_cities.sort(key=lambda x: x["leads"], reverse=True)
+
+    # Enrichment stats
+    ps_scores = [int(l.get("pagespeed_mobile", 0) or 0) for l in all_leads if l.get("pagespeed_mobile")]
+    enrichment_stats = {
+        "pagespeed_avg": round(sum(ps_scores) / len(ps_scores)) if ps_scores else "N/A",
+        "bbb_rated": sum(1 for l in all_leads if l.get("bbb_rating")),
+        "linkedin_found": sum(1 for l in all_leads if l.get("linkedin_url")),
+    }
+
+    # Week-over-week
+    weekly_comparison = {}
+    if prev_week:
+        weekly_comparison = {
+            "leads_delta": len(week_leads) - prev_week.get("leads", 0),
+            "contacts_delta": this_week_contacts - prev_week.get("contacts", 0),
+            "replies_delta": this_week_replies - prev_week.get("replies", 0),
+        }
+
+    # Pipeline velocity (avg days from contact to reply)
+    import datetime
+    velocities = []
+    for lead in contacted_leads:
+        contact_date = lead.get("contact_date", "")
+        reply_date = lead.get("reply_date", "")
+        if contact_date and reply_date:
+            try:
+                cd = datetime.datetime.strptime(contact_date[:10], "%Y-%m-%d")
+                rd = datetime.datetime.strptime(reply_date[:10], "%Y-%m-%d")
+                velocities.append((rd - cd).days)
+            except (ValueError, TypeError):
+                pass
+
+    pipeline_velocity = round(sum(velocities) / len(velocities), 1) if velocities else 0
+
+    # Revenue estimate ($500 avg deal value per meeting)
+    avg_deal = 500
+    estimated_revenue = total_pipeline["meeting"] * avg_deal * 0.5  # 50% close rate assumption
+
+    return {
+        "leads_discovered": len(week_leads),
+        "leads_contacted": this_week_contacts,
+        "replies_received": this_week_replies,
+        "meetings_booked": this_week_meetings,
+        "total_pipeline": total_pipeline,
+        "top_niches": top_niches[:5],
+        "top_cities": top_cities[:5],
+        "enrichment_stats": enrichment_stats,
+        "weekly_comparison": weekly_comparison,
+        "estimated_revenue": estimated_revenue,
+        "pipeline_velocity": pipeline_velocity,
+    }
+
+
+def notify_weekly_dashboard(pipeline_data):
+    """Send comprehensive weekly pipeline dashboard to Telegram.
+
+    Args:
+        pipeline_data: dict with keys:
+            leads_discovered: int -- total leads found this week
+            leads_qualified: int -- leads that passed scoring
+            leads_contacted: int -- emails sent this week
+            replies_received: int -- replies this week
+            meetings_booked: int -- meetings this week
+            total_pipeline: dict -- {discovered: N, qualified: N, contacted: N, replied: N, meeting: N, closed: N}
+            top_niches: list of dict -- [{niche, leads, replies, reply_rate}]
+            top_cities: list of dict -- [{city, leads, replies}]
+            enrichment_stats: dict -- {pagespeed_avg, bbb_rated, linkedin_found}
+            weekly_comparison: dict -- {leads_delta, contacts_delta, replies_delta}
+            estimated_revenue: float -- projected revenue from pipeline
+            pipeline_velocity: float -- avg days from contact to reply
+    """
+    # Conversion funnel
+    tp = pipeline_data.get("total_pipeline", {})
+    discovered = tp.get("discovered", 0)
+    qualified = tp.get("qualified", 0)
+    contacted = tp.get("contacted", 0)
+    replied = tp.get("replied", 0)
+    meeting = tp.get("meeting", 0)
+    closed = tp.get("closed", 0)
+
+    # Calculate conversion rates
+    qual_rate = round(qualified / discovered * 100, 1) if discovered > 0 else 0
+    contact_rate = round(contacted / qualified * 100, 1) if qualified > 0 else 0
+    reply_rate = round(replied / contacted * 100, 1) if contacted > 0 else 0
+    meeting_rate = round(meeting / replied * 100, 1) if replied > 0 else 0
+    close_rate = round(closed / meeting * 100, 1) if meeting > 0 else 0
+
+    funnel = (
+        "CONVERSION FUNNEL:\n"
+        "  Discovered:  {discovered}\n"
+        "  Qualified:   {qualified} ({qual_rate}%)\n"
+        "  Contacted:   {contacted} ({contact_rate}%)\n"
+        "  Replied:     {replied} ({reply_rate}%)\n"
+        "  Meeting:     {meeting} ({meeting_rate}%)\n"
+        "  Closed:      {closed} ({close_rate}%)"
+    ).format(
+        discovered=discovered, qualified=qualified, contacted=contacted,
+        replied=replied, meeting=meeting, closed=closed,
+        qual_rate=qual_rate, contact_rate=contact_rate, reply_rate=reply_rate,
+        meeting_rate=meeting_rate, close_rate=close_rate,
+    )
+
+    # This week's activity
+    wk = pipeline_data
+    weekly_activity = (
+        "\nTHIS WEEK:\n"
+        "  New leads:    {leads}\n"
+        "  Emails sent:  {contacts}\n"
+        "  Replies:      {replies}\n"
+        "  Meetings:     {meetings}"
+    ).format(
+        leads=wk.get("leads_discovered", 0),
+        contacts=wk.get("leads_contacted", 0),
+        replies=wk.get("replies_received", 0),
+        meetings=wk.get("meetings_booked", 0),
+    )
+
+    # Week-over-week comparison
+    comp = pipeline_data.get("weekly_comparison", {})
+    def _delta_str(val):
+        if val is None or val == 0:
+            return "flat"
+        return "+{}".format(val) if val > 0 else str(val)
+
+    comparison = (
+        "\nWEEK-OVER-WEEK:\n"
+        "  Leads:    {leads}\n"
+        "  Contacts: {contacts}\n"
+        "  Replies:  {replies}"
+    ).format(
+        leads=_delta_str(comp.get("leads_delta")),
+        contacts=_delta_str(comp.get("contacts_delta")),
+        replies=_delta_str(comp.get("replies_delta")),
+    )
+
+    # Top niches by reply rate
+    top_niches = pipeline_data.get("top_niches", [])
+    niche_section = ""
+    if top_niches:
+        niche_section = "\nTOP NICHES (by reply rate):\n"
+        for i, n in enumerate(top_niches[:5], 1):
+            niche_section += "  {}. {} -- {} leads, {}% reply\n".format(
+                i, n.get("niche", "?"), n.get("leads", 0), n.get("reply_rate", 0))
+
+    # Top cities
+    top_cities = pipeline_data.get("top_cities", [])
+    city_section = ""
+    if top_cities:
+        city_section = "\nTOP CITIES:\n"
+        for i, c in enumerate(top_cities[:5], 1):
+            city_section += "  {}. {} -- {} leads, {} replies\n".format(
+                i, c.get("city", "?"), c.get("leads", 0), c.get("replies", 0))
+
+    # Enrichment stats
+    enrich = pipeline_data.get("enrichment_stats", {})
+    enrich_section = ""
+    if enrich:
+        enrich_section = (
+            "\nENRICHMENT STATS:\n"
+            "  Avg PageSpeed:  {ps}\n"
+            "  BBB Rated:      {bbb}\n"
+            "  LinkedIn Found: {li}"
+        ).format(
+            ps=enrich.get("pagespeed_avg", "N/A"),
+            bbb=enrich.get("bbb_rated", "N/A"),
+            li=enrich.get("linkedin_found", "N/A"),
+        )
+
+    # ROI estimate
+    revenue = pipeline_data.get("estimated_revenue", 0)
+    velocity = pipeline_data.get("pipeline_velocity", 0)
+    roi_section = ""
+    if revenue > 0 or velocity > 0:
+        roi_section = (
+            "\nROI ESTIMATES:\n"
+            "  Pipeline value:     ${revenue:,.0f}\n"
+            "  Avg days to reply:  {velocity:.1f}"
+        ).format(revenue=revenue, velocity=velocity)
+
+    # Assemble full dashboard
+    msg = (
+        "<b>WEEKLY PIPELINE DASHBOARD</b>\n"
+        "================================\n\n"
+        "{funnel}\n"
+        "{weekly_activity}\n"
+        "{comparison}\n"
+        "{niche_section}"
+        "{city_section}"
+        "{enrich_section}"
+        "{roi_section}"
+    ).format(
+        funnel=funnel,
+        weekly_activity=weekly_activity,
+        comparison=comparison,
+        niche_section=niche_section,
+        city_section=city_section,
+        enrich_section=enrich_section,
+        roi_section=roi_section,
+    )
+
+    send_telegram(msg)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Callback query handler (for inline button responses)
 # ---------------------------------------------------------------------------
 
