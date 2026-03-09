@@ -1,4 +1,4 @@
-"""
+""" 
 config.py
 Centralized configuration for LeadGen Bot v3.
 All environment variables, scoring weights, timing rules, and defaults.
@@ -13,12 +13,14 @@ import json
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")  # For IMAP reply tracking
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 
 # Google Sheets service account credentials (JSON string from secret)
 GOOGLE_SHEETS_CREDENTIALS_JSON = os.getenv("GOOGLE_SHEETS_CREDENTIALS", "")
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")  # Optional: fallback search when HTML scraping fails
 
 
 def get_google_credentials_dict():
@@ -54,6 +56,58 @@ TELEGRAM_MESSAGE_LIMIT = 4000
 SHEET_TAB_LEADS = "Sheet1"
 SHEET_TAB_CONTACTED = "Contacted"
 SHEET_TAB_CONFIG = "Config"
+
+# ---------------------------------------------------------------------------
+# Email Warm-Up & Deliverability
+# ---------------------------------------------------------------------------
+
+# Weekly warm-up schedule: {week_number: max_emails_per_day}
+# Week 1 = first 7 days of sending. Ramps up gradually to protect sender reputation.
+EMAIL_WARMUP_SCHEDULE = {
+    1: 5,
+    2: 10,
+    3: 15,
+    4: 20,
+    5: 30,
+    6: 40,
+    7: 50,
+}
+EMAIL_MAX_PER_DAY_DEFAULT = 50  # After warm-up completes
+
+# Best send windows (day_of_week: 0=Mon, hours in 24h CT)
+# Research shows Tue-Thu 9-11am gets highest open rates for B2B cold email
+EMAIL_SEND_DAYS = [1, 2, 3]  # Tuesday, Wednesday, Thursday (0=Monday)
+EMAIL_SEND_HOURS = (9, 11)  # 9am-11am CT (start_hour, end_hour)
+EMAIL_SEND_TIMEZONE = "America/Chicago"
+
+# Warm-up start date (set when first email is sent, stored in Metrics tab)
+EMAIL_WARMUP_START = os.getenv("EMAIL_WARMUP_START", "")  # ISO date string e.g. "2026-03-09"
+
+# ---------------------------------------------------------------------------
+# Open / Click Tracking
+# ---------------------------------------------------------------------------
+
+# Tracking pixel -- 1x1 transparent PNG served from GitHub Pages or any static host
+# Set TRACKING_PIXEL_BASE_URL to your hosted pixel endpoint.
+# The bot appends ?lid=<lead_email_hash> to track unique opens.
+TRACKING_PIXEL_BASE_URL = os.getenv("TRACKING_PIXEL_BASE_URL", "")
+
+# Link tracking -- wraps links in emails through a redirect endpoint
+# Set LINK_TRACKER_BASE_URL to your redirect service (e.g., GitHub Pages with JS redirect)
+# Format: {base}?url={original_url}&lid={lead_hash}
+LINK_TRACKER_BASE_URL = os.getenv("LINK_TRACKER_BASE_URL", "")
+
+# A/B Testing
+AB_MIN_SENDS_FOR_WINNER = 10  # Minimum sends per variant before declaring winner
+AB_WIN_THRESHOLD = 0.15  # Variant must beat other by 15% relative to win
+
+# Engagement scoring weights
+ENGAGEMENT_WEIGHTS = {
+    "open": 1,
+    "click": 3,
+    "reply": 10,
+    "meeting": 25,
+}
 
 # ---------------------------------------------------------------------------
 # Lead Scoring Weights
@@ -100,12 +154,75 @@ FALLBACK_SEARCHES = [
     "roofing contractor Minneapolis MN",
     "HVAC Saint Paul MN",
     "general contractor Minneapolis MN",
+    "dentist Bloomington MN",
+    "chiropractor Eagan MN",
+    "plumber Woodbury MN",
+    "auto repair Burnsville MN",
+    "restaurant Roseville MN",
+    "hair salon Maple Grove MN",
+    "electrician Plymouth MN",
+    "cleaning service Eden Prairie MN",
+    "roofing contractor Lakeville MN",
+    "HVAC Brooklyn Park MN",
+    "landscaping Edina MN",
+    "general contractor Coon Rapids MN",
 ]
 
 FALLBACK_CITIES = [
     "Saint Paul MN",
     "Minneapolis MN",
+    "Bloomington MN",
+    "Woodbury MN",
+    "Eagan MN",
+    "Burnsville MN",
+    "Roseville MN",
+    "Maple Grove MN",
+    "Plymouth MN",
+    "Eden Prairie MN",
+    "Lakeville MN",
+    "Brooklyn Park MN",
+    "Edina MN",
+    "Coon Rapids MN",
+    "Apple Valley MN",
+    "Shakopee MN",
+    "Richfield MN",
+    "Fridley MN",
 ]
+
+# ---------------------------------------------------------------------------
+# Seasonal Niche Calendar
+# ---------------------------------------------------------------------------
+# Maps month numbers to high-demand niches. The scraper rotates priority
+# niches based on the current month to catch seasonal buying intent.
+
+SEASONAL_NICHES = {
+    1:  [("snow removal", "peak snow season"), ("HVAC", "furnace emergencies"), ("plumber", "frozen pipes")],
+    2:  [("snow removal", "late winter storms"), ("HVAC", "heating season"), ("tax preparer", "tax season starts")],
+    3:  [("landscaping", "spring prep bookings"), ("roofing contractor", "winter damage repairs"), ("cleaning service", "spring cleaning")],
+    4:  [("landscaping", "spring rush"), ("general contractor", "remodel season starts"), ("pest control", "spring emergence")],
+    5:  [("landscaping", "full season"), ("deck builder", "outdoor living season"), ("painting contractor", "exterior season")],
+    6:  [("HVAC", "AC installs peak"), ("pool service", "summer opening"), ("landscaping", "maintenance contracts")],
+    7:  [("HVAC", "AC repair peak"), ("roofing contractor", "storm damage"), ("pest control", "summer peak")],
+    8:  [("HVAC", "late summer AC"), ("painting contractor", "exterior before fall"), ("general contractor", "back-to-school remodels")],
+    9:  [("roofing contractor", "pre-winter repairs"), ("HVAC", "furnace tune-ups"), ("gutter cleaning", "fall leaf prep")],
+    10: [("HVAC", "heating season starts"), ("chimney sweep", "fireplace season"), ("landscaping", "fall cleanup")],
+    11: [("snow removal", "first snow contracts"), ("HVAC", "furnace emergencies"), ("plumber", "winterization")],
+    12: [("snow removal", "peak contracts"), ("HVAC", "heating emergencies"), ("electrician", "holiday lighting")],
+}
+
+
+def get_seasonal_searches(month=None):
+    """Return seasonal niche searches for the given month (default: current).
+    Combines seasonal niches with FALLBACK_CITIES for full search queries."""
+    import datetime as _dt
+    if month is None:
+        month = _dt.date.today().month
+    niches = SEASONAL_NICHES.get(month, [])
+    searches = []
+    for niche_kw, _reason in niches:
+        for city in FALLBACK_CITIES[:6]:
+            searches.append("{} {}".format(niche_kw, city))
+    return searches
 
 MAX_QUERIES_PER_RUN = 6
 MAX_RESULTS_PER_QUERY = 20
@@ -204,6 +321,18 @@ INDUSTRY_ANGLES = {
         "pain_points": ["patient education content", "online booking", "Google Maps", "review generation"],
         "hook": "People searching for pain relief pick the chiropractor they find first and trust most -- that should be {name}.",
     },
+    "snow removal": {
+        "pain_points": ["emergency response time", "residential contract management", "route optimization", "seasonal pricing"],
+        "hook": "When 8 inches of snow hits overnight, homeowners need someone they can count on -- is {name} the first call they make?",
+    },
+    "pest control": {
+        "pain_points": ["seasonal pest alerts", "online booking", "Google reviews", "eco-friendly messaging"],
+        "hook": "Homeowners searching 'pest control near me' pick the company with the best reviews and fastest booking -- let's make that {name}.",
+    },
+    "painting contractor": {
+        "pain_points": ["before/after gallery", "color visualization", "online estimates", "review generation"],
+        "hook": "A stunning portfolio site could double {name}'s quote requests -- your work deserves to be seen online.",
+    },
     "default": {
         "pain_points": ["Google visibility", "online reviews", "website modernization", "lead capture"],
         "hook": "I came across {name} and noticed a few quick wins that could bring in more customers from Google.",
@@ -234,10 +363,14 @@ LEADS_COLUMNS = [
     "reply_date", "website_ssl", "website_mobile",
     "website_blog", "competition_density",
     "subject_line_a", "subject_line_b",
+    "pagespeed_mobile", "pagespeed_desktop",
+    "bbb_rating", "bbb_accredited", "linkedin_url",
 ]
 
 CONTACTED_COLUMNS = [
     "name", "email", "niche", "city", "score",
     "sent_date", "subject", "sequence_num",
     "template_variant", "reply_received", "reply_date",
+    "open_count", "first_open_date", "click_count", "first_click_date",
+    "subject_variant_used", "engagement_score",
 ]
