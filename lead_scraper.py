@@ -1,8 +1,9 @@
 """
-lead_scraper.py
-Free lead scraper using Google Maps + Yelp via httpx + BeautifulSoup.
-Scores and filters leads for local service businesses in Saint Paul/Minneapolis MN.
-Zero API cost -- all scraping is done via public HTTP requests.
+lead_scraper.py  -- LeadGen Bot v3
+Free lead scraper using Google Maps + Yelp + Facebook Pages via httpx + BeautifulSoup.
+Scores and filters leads with website quality analysis, competition density, and review sentiment.
+Reads search queries from Google Sheets Config tab. Deduplicates against existing leads.
+Zero API cost -- all scraping via public HTTP requests.
 """
 
 import os
@@ -11,69 +12,44 @@ import csv
 import time
 import json
 import random
+import socket
 import datetime
 import httpx
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, urljoin, urlparse
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-TARGET_SEARCHES = [
-    "plumber Saint Paul MN",
-    "electrician Minneapolis MN",
-    "auto repair Saint Paul MN",
-    "landscaping Minneapolis MN",
-    "cleaning service Saint Paul MN",
-    "restaurant Minneapolis MN",
-    "hair salon Saint Paul MN",
-    "roofing contractor Minneapolis MN",
-    "HVAC Saint Paul MN",
-    "general contractor Minneapolis MN",
-]
-
-LEADS_FILE = "leads.csv"
-CONTACTED_FILE = "contacted.csv"
-
-LEADS_COLUMNS = [
-    "name", "address", "phone", "website", "rating",
-    "reviews", "email", "score", "reason", "niche",
-    "city", "scraped_date", "status", "source",
-]
-
-# Rotate user agents to avoid blocks
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-]
+from config import (
+    USER_AGENTS, IGNORE_EMAIL_DOMAINS, IGNORE_EMAIL_PREFIXES,
+    CONTACT_PATHS, SCORING_WEIGHTS, LEADS_COLUMNS,
+    MAX_QUERIES_PER_RUN, MAX_RESULTS_PER_QUERY,
+    SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX,
+    MAX_RETRIES, RETRY_BACKOFF_BASE,
+    MIN_SCORE_FOR_DRAFT, FALLBACK_SEARCHES,
+)
+from sheets_client import (
+    is_connected as sheets_connected,
+    get_search_queries, get_existing_lead_keys, append_leads,
+)
 
 EMAIL_REGEX = re.compile(
     r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
 )
 
-# Emails to ignore (generic / spam traps)
-IGNORE_EMAIL_DOMAINS = {
-    "example.com", "example.org", "test.com", "sentry.io",
-    "wixpress.com", "squarespace.com", "godaddy.com",
-    "googleapis.com", "googleusercontent.com", "gstatic.com",
-    "w3.org", "schema.org", "wordpress.org", "jquery.com",
-}
-
-IGNORE_EMAIL_PREFIXES = {
-    "noreply", "no-reply", "donotreply", "postmaster", "mailer-daemon",
-    "webmaster", "hostmaster", "abuse", "support@wix", "support@squarespace",
+# Error categories for Telegram reporting
+SCRAPE_ERRORS = {
+    "no_leads_found": [],
+    "scraping_blocked": [],
+    "network_error": [],
+    "parse_error": [],
 }
 
 
 # ---------------------------------------------------------------------------
-# HTTP client helper
+# HTTP helpers
 # ---------------------------------------------------------------------------
 
 def _get_client():
-    """Create an httpx client with randomized user agent and timeouts."""
+    """Create httpx client with randomized user agent."""
     return httpx.Client(
         headers={
             "User-Agent": random.choice(USER_AGENTS),
@@ -85,634 +61,623 @@ def _get_client():
     )
 
 
-def _polite_sleep(min_sec=2, max_sec=5):
-    """Random sleep to be polite and avoid rate limits."""
-    time.sleep(random.uniform(min_sec, max_sec))
+def _polite_sleep():
+    """Random sleep to avoid rate limits."""
+    time.sleep(random.uniform(SCRAPE_DELAY_MIN, SCRAPE_DELAY_MAX))
+
+
+def _fetch_with_retry(client, url, context=""):
+    """Fetch URL with exponential backoff on 429/503."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = client.get(url)
+            if resp.status_code in (429, 503):
+                wait = RETRY_BACKOFF_BASE * (2 ** attempt)
+                print("[SCRAPER] Rate limited on {} ({}), waiting {}s...".format(
+                    context, resp.status_code, wait))
+                SCRAPE_ERRORS["scraping_blocked"].append({
+                    "url": url, "status": resp.status_code, "context": context
+                })
+                time.sleep(wait)
+                continue
+            if resp.status_code == 200:
+                return resp
+            else:
+                print("[SCRAPER] HTTP {} for {}".format(resp.status_code, context))
+                return None
+        except httpx.TimeoutException:
+            wait = RETRY_BACKOFF_BASE * (2 ** attempt)
+            print("[SCRAPER] Timeout on {}, retry in {}s".format(context, wait))
+            SCRAPE_ERRORS["network_error"].append({"url": url, "context": context, "error": "timeout"})
+            time.sleep(wait)
+        except Exception as e:
+            SCRAPE_ERRORS["network_error"].append({"url": url, "context": context, "error": str(e)})
+            print("[SCRAPER] Error fetching {}: {}".format(context, e))
+            return None
+
+    print("[SCRAPER] Max retries exceeded for {}".format(context))
+    return None
 
 
 # ---------------------------------------------------------------------------
-# Google Maps scraping (via Google Search local results)
+# Email discovery (deep)
 # ---------------------------------------------------------------------------
 
-def scrape_google_maps(query, max_results=20):
-    """
-    Scrape Google Search local/maps results for a business query.
-    Uses the public Google Search page and parses the local pack results.
-    Returns a list of business dicts.
-    """
-    results = []
-    encoded_q = quote_plus(query)
-    url = "https://www.google.com/search?q={}&num=20&tbm=lcl".format(encoded_q)
+def _filter_email(email):
+    """Check if email should be ignored."""
+    if not email:
+        return False
+    email = email.lower().strip()
+    domain = email.split("@")[-1]
+    if domain in IGNORE_EMAIL_DOMAINS:
+        return False
+    for prefix in IGNORE_EMAIL_PREFIXES:
+        if email.startswith(prefix):
+            return False
+    return True
+
+
+def discover_emails_deep(client, website_url):
+    """Scrape website homepage + contact/about pages for emails."""
+    if not website_url:
+        return []
+
+    found_emails = set()
+
+    # Normalize URL
+    if not website_url.startswith("http"):
+        website_url = "https://" + website_url
+
+    pages_to_check = [website_url]
+    parsed = urlparse(website_url)
+    base = "{}://{}".format(parsed.scheme, parsed.netloc)
+    for path in CONTACT_PATHS:
+        pages_to_check.append(base + path)
+
+    for page_url in pages_to_check:
+        try:
+            resp = client.get(page_url, timeout=15)
+            if resp.status_code == 200:
+                emails = EMAIL_REGEX.findall(resp.text)
+                for e in emails:
+                    if _filter_email(e):
+                        found_emails.add(e.lower())
+            _polite_sleep()
+        except Exception:
+            continue
+
+    return list(found_emails)
+
+
+# ---------------------------------------------------------------------------
+# Website quality analysis
+# ---------------------------------------------------------------------------
+
+def analyze_website(client, website_url):
+    """Check website for SSL, mobile-friendliness, and blog presence."""
+    result = {
+        "website_ssl": "unknown",
+        "website_mobile": "unknown",
+        "website_blog": "unknown",
+    }
+
+    if not website_url:
+        return result
+
+    if not website_url.startswith("http"):
+        website_url = "https://" + website_url
 
     try:
-        with _get_client() as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+        resp = client.get(website_url, timeout=15)
+        if resp.status_code != 200:
+            return result
 
-            # Google local results are in div elements with data-cid attributes
-            # Parse multiple possible structures
-            listings = soup.select("div.rllt__details, div[data-cid]")
+        # SSL check
+        result["website_ssl"] = "yes" if website_url.startswith("https") or str(resp.url).startswith("https") else "no"
 
-            if not listings:
-                # Fallback: try to find any business-like divs
-                listings = soup.find_all("div", class_=re.compile(r"(VkpGBb|rllt)"))
+        html = resp.text.lower()
+        soup = BeautifulSoup(html, "html.parser")
 
-            for item in listings[:max_results]:
-                biz = _parse_google_listing(item)
-                if biz and biz.get("name"):
-                    results.append(biz)
+        # Mobile check -- look for viewport meta tag
+        viewport = soup.find("meta", attrs={"name": "viewport"})
+        result["website_mobile"] = "yes" if viewport else "no"
 
-            # If structured parsing fails, try regex extraction from raw HTML
-            if not results:
-                results = _extract_google_fallback(resp.text, query)
+        # Blog check -- look for /blog links or blog-related elements
+        has_blog = False
+        for link in soup.find_all("a", href=True):
+            href = link["href"].lower()
+            if "/blog" in href or "/news" in href or "/articles" in href:
+                has_blog = True
+                break
+        result["website_blog"] = "yes" if has_blog else "no"
 
-    except Exception as exc:
-        print("  [ERROR] Google scrape failed for '{}': {}".format(query, exc))
+    except Exception:
+        pass
 
-    print("  [GOOGLE] {} results for: {}".format(len(results), query))
-    return results
+    return result
 
 
-def _parse_google_listing(item):
-    """Parse a single Google local listing element."""
-    biz = {
-        "name": "",
-        "full_address": "",
-        "phone": "",
-        "site": "",
-        "rating": 0,
-        "reviews": 0,
-    }
+# ---------------------------------------------------------------------------
+# Competition density
+# ---------------------------------------------------------------------------
 
-    # Name
-    name_el = item.select_one("span.OSrXXb, div.dbg0pd, span[role='heading']")
-    if name_el:
-        biz["name"] = name_el.get_text(strip=True)
+def estimate_competition(client, niche, city):
+    """Estimate how many competitors exist for this niche in this city."""
+    query = "{} {}".format(niche, city)
+    url = "https://www.google.com/search?q={}&num=10".format(quote_plus(query))
 
-    # Rating
-    rating_el = item.select_one("span.yi40Hd, span.BTtC6e, span[role='img']")
-    if rating_el:
-        rating_text = rating_el.get_text(strip=True)
+    try:
+        resp = _fetch_with_retry(client, url, "competition:{}".format(query))
+        if not resp:
+            return "unknown"
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # Count result entries as rough proxy
+        results = soup.find_all("div", class_="g")
+        count = len(results)
+
+        if count >= 8:
+            return "high"
+        elif count >= 4:
+            return "medium"
+        else:
+            return "low"
+    except Exception:
+        return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Lead scoring v3
+# ---------------------------------------------------------------------------
+
+def score_lead(lead):
+    """Score a lead based on multiple quality signals. Returns (score, reasons)."""
+    score = 0
+    reasons = []
+    w = SCORING_WEIGHTS
+
+    # Basic contact info
+    if lead.get("website"):
+        score += w["has_website"]
+        reasons.append("+{}:has_website".format(w["has_website"]))
+    if lead.get("email"):
+        score += w["has_email"]
+        reasons.append("+{}:has_email".format(w["has_email"]))
+    if lead.get("phone"):
+        score += w["has_phone"]
+        reasons.append("+{}:has_phone".format(w["has_phone"]))
+
+    # Rating signals
+    try:
+        rating = float(lead.get("rating", 0))
+        if rating >= 4.0:
+            score += w["high_rating"]
+            reasons.append("+{}:high_rating({})".format(w["high_rating"], rating))
+        elif rating > 0 and rating < 3.5:
+            score += w["low_rating"]
+            reasons.append("+{}:low_rating_needs_help({})".format(w["low_rating"], rating))
+    except (ValueError, TypeError):
+        pass
+
+    # Review count signals
+    try:
+        reviews = int(lead.get("reviews", 0))
+        if 0 < reviews < 20:
+            score += w["few_reviews"]
+            reasons.append("+{}:few_reviews({})".format(w["few_reviews"], reviews))
+        elif reviews > 200:
+            score += w["many_reviews"]
+            reasons.append("{}:many_reviews({})".format(w["many_reviews"], reviews))
+    except (ValueError, TypeError):
+        pass
+
+    # Website quality signals
+    if lead.get("website_ssl") == "no":
+        score += w["website_no_ssl"]
+        reasons.append("+{}:no_ssl".format(w["website_no_ssl"]))
+    if lead.get("website_mobile") == "no":
+        score += w["website_not_mobile"]
+        reasons.append("+{}:not_mobile".format(w["website_not_mobile"]))
+    if lead.get("website_blog") == "no":
+        score += w["website_no_blog"]
+        reasons.append("+{}:no_blog".format(w["website_no_blog"]))
+
+    # Competition density
+    comp = lead.get("competition_density", "unknown")
+    if comp == "high":
+        score += w["high_competition"]
+        reasons.append("+{}:high_competition".format(w["high_competition"]))
+    elif comp == "low":
+        score += w["low_competition"]
+        reasons.append("{}:low_competition".format(w["low_competition"]))
+
+    return max(0, score), "; ".join(reasons)
+
+
+# ---------------------------------------------------------------------------
+# Google Maps scraping
+# ---------------------------------------------------------------------------
+
+def scrape_google_maps(client, query, max_results=20):
+    """Scrape Google Search local results for businesses."""
+    url = "https://www.google.com/search?q={}&num={}&tbm=lcl".format(
+        quote_plus(query), max_results
+    )
+    resp = _fetch_with_retry(client, url, "google:{}".format(query))
+    if not resp:
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    businesses = []
+
+    # Parse local pack results
+    for div in soup.find_all("div", class_="VkpGBb"):
         try:
-            biz["rating"] = float(re.search(r"[\d.]+", rating_text).group())
-        except (AttributeError, ValueError):
-            pass
+            name_el = div.find("div", class_="dbg0pd")
+            name = name_el.get_text(strip=True) if name_el else ""
+            if not name:
+                continue
 
-    # Reviews count
-    reviews_el = item.select_one("span.HypWnf, span.RDApEe")
-    if reviews_el:
-        reviews_text = reviews_el.get_text(strip=True)
-        try:
-            biz["reviews"] = int(re.search(r"[\d,]+", reviews_text.replace(",", "")).group())
-        except (AttributeError, ValueError):
-            pass
+            # Address
+            addr_el = div.find("span", class_="rllt__details")
+            address = ""
+            if addr_el:
+                spans = addr_el.find_all("span")
+                address = spans[-1].get_text(strip=True) if spans else ""
 
-    # Address / location text
-    addr_el = item.select_one("span.rllt__details div:nth-of-type(2), div.pJ3Ci")
-    if addr_el:
-        biz["full_address"] = addr_el.get_text(strip=True)
+            # Phone
+            phone = ""
+            phone_match = re.search(r'\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}', div.get_text())
+            if phone_match:
+                phone = phone_match.group()
 
-    # Website link
-    link_el = item.select_one("a[href*='http']")
-    if link_el:
-        href = link_el.get("href", "")
-        if "google.com" not in href:
-            biz["site"] = href
+            # Rating
+            rating = ""
+            rating_el = div.find("span", class_="yi40Hd")
+            if rating_el:
+                rating = rating_el.get_text(strip=True)
 
-    return biz
+            # Reviews count
+            reviews = ""
+            reviews_match = re.search(r'\((\d+)\)', div.get_text())
+            if reviews_match:
+                reviews = reviews_match.group(1)
 
+            # Website (from link)
+            website = ""
+            for link in div.find_all("a", href=True):
+                href = link["href"]
+                if "google.com" not in href and href.startswith("http"):
+                    website = href
+                    break
 
-def _extract_google_fallback(html, query):
-    """
-    Fallback parser using regex to extract business data from Google HTML
-    when structured selectors fail (Google changes layout frequently).
-    """
-    results = []
+            businesses.append({
+                "name": name,
+                "address": address,
+                "phone": phone,
+                "website": website,
+                "rating": rating,
+                "reviews": reviews,
+                "source": "google",
+            })
+        except Exception as e:
+            SCRAPE_ERRORS["parse_error"].append({"source": "google", "error": str(e)})
+            continue
 
-    # Look for JSON-LD structured data
-    ld_blocks = re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
-    for block in ld_blocks:
-        try:
-            data = json.loads(block)
-            if isinstance(data, list):
-                for item in data:
-                    biz = _parse_jsonld(item)
-                    if biz:
-                        results.append(biz)
-            elif isinstance(data, dict):
-                biz = _parse_jsonld(data)
-                if biz:
-                    results.append(biz)
-        except json.JSONDecodeError:
-            pass
-
-    return results
-
-
-def _parse_jsonld(data):
-    """Try to extract business info from a JSON-LD object."""
-    biz_types = {"LocalBusiness", "Restaurant", "Store", "Organization",
-                 "AutoRepair", "Plumber", "Electrician", "HairSalon",
-                 "HomeAndConstructionBusiness", "ProfessionalService"}
-
-    schema_type = data.get("@type", "")
-    if schema_type not in biz_types:
-        return None
-
-    name = data.get("name", "").strip()
-    if not name:
-        return None
-
-    address = data.get("address", {})
-    if isinstance(address, dict):
-        addr_str = "{}, {}, {} {}".format(
-            address.get("streetAddress", ""),
-            address.get("addressLocality", ""),
-            address.get("addressRegion", ""),
-            address.get("postalCode", ""),
-        ).strip(", ")
-    else:
-        addr_str = str(address)
-
-    rating_obj = data.get("aggregateRating", {})
-    rating = 0
-    reviews = 0
-    if isinstance(rating_obj, dict):
-        try:
-            rating = float(rating_obj.get("ratingValue", 0))
-        except (ValueError, TypeError):
-            pass
-        try:
-            reviews = int(rating_obj.get("reviewCount", 0))
-        except (ValueError, TypeError):
-            pass
-
-    return {
-        "name": name,
-        "full_address": addr_str,
-        "phone": data.get("telephone", ""),
-        "site": data.get("url", ""),
-        "rating": rating,
-        "reviews": reviews,
-    }
+    return businesses[:max_results]
 
 
 # ---------------------------------------------------------------------------
 # Yelp scraping
 # ---------------------------------------------------------------------------
 
-def scrape_yelp(query, max_results=20):
-    """
-    Scrape Yelp search results for a business query.
-    Returns a list of business dicts in the same format as Google results.
-    """
-    results = []
-    niche = query.split(" ")[0]
-    city = "Saint Paul" if "Saint Paul" in query else "Minneapolis"
-    location = quote_plus("{}, MN".format(city))
-    search_term = quote_plus(niche)
-    url = "https://www.yelp.com/search?find_desc={}&find_loc={}".format(search_term, location)
+def scrape_yelp(client, query, max_results=20):
+    """Scrape Yelp search results for businesses."""
+    url = "https://www.yelp.com/search?find_desc={}&find_loc={}".format(
+        quote_plus(query.split(" ")[0]),
+        quote_plus(" ".join(query.split(" ")[1:]))
+    )
+    resp = _fetch_with_retry(client, url, "yelp:{}".format(query))
+    if not resp:
+        return []
 
-    try:
-        with _get_client() as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")
+    businesses = []
 
-            # Yelp uses JSON-LD and also has structured search result cards
-            # Try JSON embedded in script tags first
-            scripts = soup.find_all("script", type="application/ld+json")
-            for script in scripts:
-                try:
-                    data = json.loads(script.string or "")
-                    if isinstance(data, dict) and data.get("@type") == "ItemList":
-                        for item in data.get("itemListElement", [])[:max_results]:
-                            biz = item.get("item", {})
-                            if biz.get("name"):
-                                addr = biz.get("address", {})
-                                rating_obj = biz.get("aggregateRating", {})
-                                results.append({
-                                    "name": biz.get("name", ""),
-                                    "full_address": "{}, {}".format(
-                                        addr.get("streetAddress", ""),
-                                        addr.get("addressLocality", city),
-                                    ),
-                                    "phone": biz.get("telephone", ""),
-                                    "site": biz.get("url", ""),
-                                    "rating": float(rating_obj.get("ratingValue", 0) or 0),
-                                    "reviews": int(rating_obj.get("reviewCount", 0) or 0),
-                                })
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    pass
-
-            # Fallback: parse HTML result cards
-            if not results:
-                cards = soup.select("div[data-testid='serp-ia-card'], li.border-color--default__09f24__NPAKY")
-                for card in cards[:max_results]:
-                    biz = _parse_yelp_card(card, city)
-                    if biz and biz.get("name"):
-                        results.append(biz)
-
-    except Exception as exc:
-        print("  [ERROR] Yelp scrape failed for '{}': {}".format(query, exc))
-
-    print("  [YELP]   {} results for: {}".format(len(results), query))
-    return results
-
-
-def _parse_yelp_card(card, city):
-    """Parse a Yelp search result card element."""
-    biz = {
-        "name": "",
-        "full_address": "",
-        "phone": "",
-        "site": "",
-        "rating": 0,
-        "reviews": 0,
-    }
-
-    # Name
-    name_el = card.select_one("a.css-19v1rkv, h3 a, a[href*='/biz/']")
-    if name_el:
-        biz["name"] = name_el.get_text(strip=True)
-        href = name_el.get("href", "")
-        if href.startswith("/biz/"):
-            biz["site"] = "https://www.yelp.com" + href
-
-    # Rating
-    rating_el = card.select_one("div[aria-label*='star rating'], span[class*='star']")
-    if rating_el:
-        label = rating_el.get("aria-label", "")
+    for container in soup.find_all("div", {"data-testid": "serp-ia-card"}):
         try:
-            biz["rating"] = float(re.search(r"[\d.]+", label).group())
-        except (AttributeError, ValueError):
-            pass
+            name_el = container.find("a", class_="css-19v1rkv")
+            if not name_el:
+                name_el = container.find("a", {"name": True})
+            name = name_el.get_text(strip=True) if name_el else ""
+            if not name:
+                continue
 
-    # Reviews
-    review_el = card.select_one("span.reviewCount, span.css-chan6m")
-    if review_el:
+            # Remove leading number (e.g., "1. Joe's Plumbing")
+            name = re.sub(r'^\d+\.\s*', '', name)
+
+            website = ""
+            if name_el and name_el.get("href"):
+                biz_url = "https://www.yelp.com" + name_el["href"] if name_el["href"].startswith("/") else name_el["href"]
+                # We could follow this to get the actual website but that's slow
+                website = biz_url
+
+            address = ""
+            addr_el = container.find("address")
+            if addr_el:
+                address = addr_el.get_text(strip=True)
+
+            phone = ""
+            phone_el = container.find("p", string=re.compile(r'\(\d{3}\)'))
+            if phone_el:
+                phone = phone_el.get_text(strip=True)
+
+            rating = ""
+            rating_el = container.find("div", {"aria-label": re.compile(r"star rating")})
+            if rating_el:
+                rating_match = re.search(r'([\d.]+)', rating_el.get("aria-label", ""))
+                if rating_match:
+                    rating = rating_match.group(1)
+
+            reviews = ""
+            reviews_el = container.find("span", string=re.compile(r'\d+ review'))
+            if reviews_el:
+                reviews_match = re.search(r'(\d+)', reviews_el.get_text())
+                if reviews_match:
+                    reviews = reviews_match.group(1)
+
+            businesses.append({
+                "name": name,
+                "address": address,
+                "phone": phone,
+                "website": website,
+                "rating": rating,
+                "reviews": reviews,
+                "source": "yelp",
+            })
+        except Exception as e:
+            SCRAPE_ERRORS["parse_error"].append({"source": "yelp", "error": str(e)})
+            continue
+
+    return businesses[:max_results]
+
+
+# ---------------------------------------------------------------------------
+# Facebook Pages scraping
+# ---------------------------------------------------------------------------
+
+def scrape_facebook_pages(client, query, max_results=10):
+    """Search Google for Facebook business pages."""
+    search_query = "site:facebook.com {} business page".format(query)
+    url = "https://www.google.com/search?q={}&num={}".format(
+        quote_plus(search_query), max_results
+    )
+    resp = _fetch_with_retry(client, url, "facebook:{}".format(query))
+    if not resp:
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    businesses = []
+
+    for div in soup.find_all("div", class_="g"):
         try:
-            biz["reviews"] = int(re.search(r"\d+", review_el.get_text()).group())
-        except (AttributeError, ValueError):
-            pass
+            link = div.find("a", href=True)
+            if not link or "facebook.com" not in link["href"]:
+                continue
 
-    # Address
-    addr_el = card.select_one("address, span.raw__09f24__T4Ezm")
-    if addr_el:
-        biz["full_address"] = addr_el.get_text(strip=True)
-    else:
-        biz["full_address"] = city + ", MN"
+            title = link.get_text(strip=True)
+            if not title or "Facebook" not in title:
+                continue
 
-    return biz
+            # Clean business name from Facebook title
+            name = re.sub(r'\s*[-|]?\s*Facebook.*$', '', title, flags=re.IGNORECASE).strip()
+            name = re.sub(r'\s*[-|]?\s*\d+\s*photos?.*$', '', name, flags=re.IGNORECASE).strip()
+            if not name or len(name) < 3:
+                continue
 
+            # Get snippet for potential phone/address
+            snippet = ""
+            snippet_el = div.find("div", class_="VwiC3b")
+            if snippet_el:
+                snippet = snippet_el.get_text()
 
-# ---------------------------------------------------------------------------
-# Email discovery from website
-# ---------------------------------------------------------------------------
+            phone = ""
+            phone_match = re.search(r'\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}', snippet)
+            if phone_match:
+                phone = phone_match.group()
 
-def discover_email(website_url):
-    """
-    Visit a business website and try to find an email address.
-    Checks the homepage and common contact pages.
-    Returns the first valid email found, or empty string.
-    """
-    if not website_url:
-        return ""
+            businesses.append({
+                "name": name,
+                "address": "",
+                "phone": phone,
+                "website": link["href"],
+                "rating": "",
+                "reviews": "",
+                "source": "facebook",
+            })
+        except Exception as e:
+            SCRAPE_ERRORS["parse_error"].append({"source": "facebook", "error": str(e)})
+            continue
 
-    # Clean up URL
-    if not website_url.startswith("http"):
-        website_url = "https://" + website_url
-
-    # Remove yelp.com URLs (they won't have the business email)
-    if "yelp.com" in website_url:
-        return ""
-
-    pages_to_check = [
-        website_url,
-        urljoin(website_url, "/contact"),
-        urljoin(website_url, "/contact-us"),
-        urljoin(website_url, "/about"),
-    ]
-
-    found_emails = set()
-
-    try:
-        with _get_client() as client:
-            for page_url in pages_to_check:
-                try:
-                    resp = client.get(page_url)
-                    if resp.status_code != 200:
-                        continue
-
-                    # Extract emails from page text
-                    emails = EMAIL_REGEX.findall(resp.text)
-                    for email in emails:
-                        email_lower = email.lower()
-                        domain = email_lower.split("@")[1] if "@" in email_lower else ""
-                        prefix = email_lower.split("@")[0] if "@" in email_lower else ""
-
-                        # Skip junk emails
-                        if domain in IGNORE_EMAIL_DOMAINS:
-                            continue
-                        if any(email_lower.startswith(p) for p in IGNORE_EMAIL_PREFIXES):
-                            continue
-                        if len(email) > 60:  # suspicious long email
-                            continue
-
-                        found_emails.add(email_lower)
-
-                    if found_emails:
-                        break  # Found emails, no need to check more pages
-
-                    _polite_sleep(1, 2)
-
-                except Exception:
-                    continue  # Page failed, try next
-
-    except Exception as exc:
-        print("    [EMAIL] Could not fetch {}: {}".format(website_url, exc))
-
-    if found_emails:
-        # Prefer info@, contact@, owner@ addresses
-        preferred_prefixes = ["info", "contact", "owner", "hello", "admin"]
-        for prefix in preferred_prefixes:
-            for email in found_emails:
-                if email.startswith(prefix + "@"):
-                    return email
-        return sorted(found_emails)[0]  # Return first alphabetically
-
-    return ""
+    return businesses[:max_results]
 
 
 # ---------------------------------------------------------------------------
-# Lead scoring
-# ---------------------------------------------------------------------------
-
-def score_lead(lead):
-    """
-    Score a lead from 0-100.
-
-    Scoring rules:
-      +25  No website listed (or website is just a Yelp page)
-      +20  Rating < 3.5  (bad reputation - needs reputation management)
-      +10  Rating < 4.2  (mediocre - still improvable)
-      +10  Review count between 1 and 50 (small, reachable business)
-      +15  Email address found
-      +10  Phone number found (reachable)
-
-    Disqualification rules (returns score=0):
-      - reviews > 200  (too established)
-      - reviews == 0   (possibly closed/fake listing)
-
-    Qualification threshold: score >= 50
-    Returns (score: int, reason: str)
-    """
-    score = 0
-    reasons = []
-
-    rating = lead.get("rating") or 0
-    reviews = lead.get("reviews") or 0
-    website = (lead.get("website") or "").strip()
-    email = (lead.get("email") or "").strip()
-    phone = (lead.get("phone") or "").strip()
-
-    # Website is "no website" if empty or just a Yelp listing URL
-    has_real_website = bool(website) and "yelp.com" not in website
-
-    # Disqualify first
-    if reviews == 0:
-        return 0, "disqualified: zero reviews"
-    if reviews > 200:
-        return 0, "disqualified: too many reviews (>200)"
-
-    # Positive signals
-    if not has_real_website:
-        score += 25
-        reasons.append("no website (+25)")
-
-    if rating and rating < 3.5:
-        score += 20
-        reasons.append("rating {} < 3.5 (+20)".format(rating))
-    elif rating and rating < 4.2:
-        score += 10
-        reasons.append("rating {} < 4.2 (+10)".format(rating))
-
-    if 1 <= reviews <= 50:
-        score += 10
-        reasons.append("{} reviews in 1-50 range (+10)".format(reviews))
-
-    if email:
-        score += 15
-        reasons.append("email found (+15)")
-
-    if phone:
-        score += 10
-        reasons.append("phone found (+10)")
-
-    reason_str = "; ".join(reasons) if reasons else "no qualifying signals"
-    return score, reason_str
-
-
-# ---------------------------------------------------------------------------
-# Contacted list
-# ---------------------------------------------------------------------------
-
-def load_contacted():
-    """
-    Read contacted.csv and return a set of business names already contacted,
-    to avoid duplicate outreach.
-    """
-    contacted = set()
-    if not os.path.exists(CONTACTED_FILE):
-        return contacted
-    try:
-        with open(CONTACTED_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                name = (row.get("name") or "").strip().lower()
-                if name:
-                    contacted.add(name)
-    except Exception as exc:
-        print("[WARN] Could not read {}: {}".format(CONTACTED_FILE, exc))
-    return contacted
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _city_from_address(address):
-    """Best-effort city extraction from a full address string."""
-    if "Saint Paul" in address:
-        return "Saint Paul"
-    if "Minneapolis" in address:
-        return "Minneapolis"
-    return "MN"
-
-
-def _niche_from_query(query):
-    """Return the first word of the search query as the niche label."""
-    return query.split(" ")[0].lower()
-
-
-def _save_leads(leads):
-    """Write (or append to) leads.csv."""
-    file_exists = os.path.exists(LEADS_FILE)
-    with open(LEADS_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=LEADS_COLUMNS)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerows(leads)
-
-
-# ---------------------------------------------------------------------------
-# Main scraper function
+# Main scraper pipeline
 # ---------------------------------------------------------------------------
 
 def run_scraper():
     """
-    Full scrape pipeline:
-      1. Loop through TARGET_SEARCHES
-      2. Scrape Google + Yelp for each query (two sources, free)
-      3. Discover emails from business websites
-      4. Score each result
-      5. Filter: qualified score >= 50, not already contacted, not duplicate
-      6. Save qualified leads to leads.csv
-      7. Return the list of qualified lead dicts
+    Execute the full scraping pipeline:
+    1. Load search queries from Google Sheets (or fallback)
+    2. Pick random subset of queries for this run
+    3. Scrape Google Maps + Yelp + Facebook for each query
+    4. Deep email discovery on business websites
+    5. Website quality analysis
+    6. Competition density estimation
+    7. Score and deduplicate leads
+    8. Save to Google Sheets (or CSV fallback)
+    Returns: (qualified_leads_list, error_summary_dict)
     """
-    contacted = load_contacted()
-    today = datetime.date.today().isoformat()
+    global SCRAPE_ERRORS
+    SCRAPE_ERRORS = {
+        "no_leads_found": [],
+        "scraping_blocked": [],
+        "network_error": [],
+        "parse_error": [],
+    }
+
+    # Load queries from Sheets or fallback
+    all_queries = get_search_queries() if sheets_connected() else FALLBACK_SEARCHES
+    
+    # Pick random subset for this run
+    if len(all_queries) > MAX_QUERIES_PER_RUN:
+        queries = random.sample(all_queries, MAX_QUERIES_PER_RUN)
+    else:
+        queries = all_queries
+
+    print("[SCRAPER] Running {} queries this session".format(len(queries)))
+    for q in queries:
+        print("  - {}".format(q))
+
+    # Get existing leads for dedup
+    existing_keys = get_existing_lead_keys() if sheets_connected() else set()
+    print("[SCRAPER] {} existing leads for dedup".format(len(existing_keys)))
+
     all_leads = []
-    seen_names = set()  # dedupe within this run
+    client = _get_client()
 
-    for query in TARGET_SEARCHES:
-        print("\n[SCRAPE] " + query)
+    for query in queries:
+        print("\n[SCRAPER] Processing: {}".format(query))
 
-        # Scrape both sources
-        google_results = scrape_google_maps(query)
-        _polite_sleep(3, 6)  # Pause between sources
-        yelp_results = scrape_yelp(query)
+        # Extract niche and city from query
+        parts = query.rsplit(" ", 2)
+        if len(parts) >= 3:
+            niche = " ".join(parts[:-2])
+            city = " ".join(parts[-2:])
+        else:
+            niche = query
+            city = "Minneapolis MN"
 
-        niche = _niche_from_query(query)
+        # Scrape all three sources
+        google_results = scrape_google_maps(client, query, MAX_RESULTS_PER_QUERY)
+        _polite_sleep()
+        yelp_results = scrape_yelp(client, query, MAX_RESULTS_PER_QUERY)
+        _polite_sleep()
+        fb_results = scrape_facebook_pages(client, query, min(10, MAX_RESULTS_PER_QUERY))
+        _polite_sleep()
 
-        # Combine results, tag source
-        combined = []
-        for r in google_results:
-            r["_source"] = "google"
-            combined.append(r)
-        for r in yelp_results:
-            r["_source"] = "yelp"
-            combined.append(r)
+        combined = google_results + yelp_results + fb_results
+        print("[SCRAPER] Found {} raw results for '{}'".format(len(combined), query))
 
-        for raw in combined:
-            name = (raw.get("name") or "").strip()
-            if not name:
-                continue
+        if not combined:
+            SCRAPE_ERRORS["no_leads_found"].append(query)
+            continue
 
-            name_key = name.lower()
+        # Estimate competition for this niche/city combo
+        competition = estimate_competition(client, niche, city)
+        _polite_sleep()
 
-            # Skip already contacted
-            if name_key in contacted:
-                print("  [SKIP] Already contacted: " + name)
-                continue
+        # Process each lead
+        seen_names = set()
+        for biz in combined:
+            name = biz.get("name", "").strip()
+            name_lower = name.lower()
 
             # Skip duplicates within this run
-            if name_key in seen_names:
+            if name_lower in seen_names:
                 continue
-            seen_names.add(name_key)
+            seen_names.add(name_lower)
 
-            # Extract / normalize fields
-            website = (raw.get("site") or "").strip()
-            address = (raw.get("full_address") or "").strip()
-            city = _city_from_address(address)
-            rating = raw.get("rating") or 0
-            reviews = raw.get("reviews") or 0
-            phone = (raw.get("phone") or "").strip()
-            source = raw.get("_source", "unknown")
-
-            # Try to discover email from website
-            email = ""
-            if website and "yelp.com" not in website:
-                print("    [EMAIL] Checking {} ...".format(website[:60]))
-                email = discover_email(website)
-                if email:
-                    print("    [EMAIL] Found: {}".format(email))
-                _polite_sleep(1, 3)
-
-            # Score the lead
-            lead_for_scoring = {
-                "website": website if "yelp.com" not in website else "",
-                "email": email,
-                "phone": phone,
-                "rating": rating,
-                "reviews": reviews,
-            }
-            score, reason = score_lead(lead_for_scoring)
-
-            if score < 50:
-                print("  [LOW]  score={:3d} - {} ({})".format(score, name, reason))
+            # Skip if already in Google Sheets
+            if (name_lower, city.lower()) in existing_keys:
+                print("[SCRAPER] Skipping duplicate: {}".format(name))
                 continue
 
+            # Deep email discovery
+            emails = discover_emails_deep(client, biz.get("website", ""))
+            email = emails[0] if emails else ""
+
+            # Website quality
+            site_quality = analyze_website(client, biz.get("website", ""))
+
+            # Build lead record
             lead = {
                 "name": name,
-                "address": address,
-                "phone": phone,
-                "website": website if "yelp.com" not in website else "",
-                "rating": rating,
-                "reviews": reviews,
+                "address": biz.get("address", ""),
+                "phone": biz.get("phone", ""),
+                "website": biz.get("website", ""),
+                "rating": biz.get("rating", ""),
+                "reviews": biz.get("reviews", ""),
                 "email": email,
-                "score": score,
-                "reason": reason,
                 "niche": niche,
                 "city": city,
-                "scraped_date": today,
-                "status": "new",
-                "source": source,
+                "scraped_date": datetime.date.today().isoformat(),
+                "source": biz.get("source", "unknown"),
+                "pipeline_stage": "new",
+                "follow_up_count": "0",
+                "last_contact": "",
+                "reply_date": "",
+                "website_ssl": site_quality.get("website_ssl", "unknown"),
+                "website_mobile": site_quality.get("website_mobile", "unknown"),
+                "website_blog": site_quality.get("website_blog", "unknown"),
+                "competition_density": competition,
+                "subject_line_a": "",
+                "subject_line_b": "",
             }
+
+            # Score the lead
+            score, reasons = score_lead(lead)
+            lead["score"] = str(score)
+            lead["reason"] = reasons
+
+            # Set status based on score
+            if score >= MIN_SCORE_FOR_DRAFT:
+                lead["status"] = "qualified"
+                lead["pipeline_stage"] = "qualified"
+            else:
+                lead["status"] = "low_score"
+                lead["pipeline_stage"] = "new"
+
             all_leads.append(lead)
-            print("  [LEAD] score={:3d} - {} | {} | src:{}".format(
-                score, name, email or "no email", source
-            ))
+            # Add to existing keys to prevent dupes across queries
+            existing_keys.add((name_lower, city.lower()))
 
-        # Be polite between search queries
-        _polite_sleep(4, 8)
+    client.close()
 
-    # Sort by score descending
-    all_leads.sort(key=lambda x: x["score"], reverse=True)
+    # Save to Google Sheets
+    if all_leads and sheets_connected():
+        append_leads(all_leads)
+    elif all_leads:
+        # CSV fallback
+        _save_csv_fallback(all_leads)
 
-    # Persist to CSV
-    if all_leads:
-        _save_leads(all_leads)
-        print("\n[DONE] {} qualified leads saved to {}".format(len(all_leads), LEADS_FILE))
-    else:
-        print("\n[DONE] No qualified leads found this run.")
+    qualified = [l for l in all_leads if l.get("status") == "qualified"]
+    print("\n[SCRAPER] DONE: {} total leads, {} qualified".format(
+        len(all_leads), len(qualified)))
 
-    return all_leads
+    return qualified, SCRAPE_ERRORS
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def _save_csv_fallback(leads):
+    """Save leads to CSV as fallback when Sheets is unavailable."""
+    csv_file = "leads.csv"
+    file_exists = os.path.exists(csv_file)
+    try:
+        with open(csv_file, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=LEADS_COLUMNS, extrasaction="ignore")
+            if not file_exists:
+                writer.writeheader()
+            writer.writerows(leads)
+        print("[SCRAPER] Saved {} leads to CSV fallback".format(len(leads)))
+    except Exception as e:
+        print("[SCRAPER] CSV save failed: {}".format(e))
 
-if __name__ == "__main__":
-    print("=" * 60)
-    print("LEAD SCRAPER v2 - Free | Google Maps + Yelp")
-    print("Saint Paul / Minneapolis MN")
-    print("=" * 60)
 
-    leads = run_scraper()
-
-    print("\n--- TOP 5 LEADS ---")
-    for i, lead in enumerate(leads[:5], 1):
-        print("{i}. {name}".format(i=i, name=lead["name"]))
-        print("   Niche   : " + lead["niche"])
-        print("   City    : " + lead["city"])
-        print("   Score   : " + str(lead["score"]))
-        print("   Rating  : {} ({} reviews)".format(lead["rating"], lead["reviews"]))
-        print("   Website : " + (lead["website"] or "(none)"))
-        print("   Email   : " + (lead["email"] or "(none)"))
-        print("   Phone   : " + (lead["phone"] or "(none)"))
-        print("   Source  : " + lead["source"])
-        print("   Reason  : " + lead["reason"])
-        print("")
+def get_error_summary():
+    """Get formatted error summary for Telegram reporting."""
+    summary = []
+    for category, errors in SCRAPE_ERRORS.items():
+        if errors:
+            summary.append("{}: {}".format(category, len(errors)))
+    return " | ".join(summary) if summary else "No errors"
