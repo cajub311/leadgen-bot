@@ -3,306 +3,299 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Twin Cities Web Co | Local Web Design & SEO in Saint Paul, MN</title>
-  <meta name="description" content="Twin Cities Web Co helps local businesses in Saint Paul, Minneapolis, and the Twin Cities metro get found online. Website design, Google optimization, SEO, and review management.">
-  <meta name="robots" content="index, follow">
-
-  <!-- Open Graph -->
-  <meta property="og:title" content="Twin Cities Web Co | Helping Local Businesses Get Found Online">
-  <meta property="og:description" content="Professional web design, SEO, and Google Business optimization for local businesses in the Twin Cities metro.">
-  <meta property="og:type" content="website">
-  <meta property="og:locale" content="en_US">
-
-  <!-- Favicon (blue circle data URI) -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%230d9488'/></svg>">
-
-  <!-- Tailwind CSS CDN -->
+  <title>Charles G Web Design | Twin Cities, MN</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            brand: { 50: '#f0fdfa', 100: '#ccfbf1', 200: '#99f6e4', 300: '#5eead4', 400: '#2dd4bf', 500: '#14b8a6', 600: '#0d9488', 700: '#0f766e', 800: '#115e59', 900: '#134e4a' },
-            dark: { 800: '#1a1a2e', 900: '#0f0f1a', 950: '#0a0a14' }
+            brand: { 50:'#edfffe', 100:'#c0fffc', 200:'#81fef9', 300:'#3afbf3', 400:'#0de5df', 500:'#06b6d4', 600:'#0891b2', 700:'#0e7490', 800:'#155e75', 900:'#164e63' },
+            dark: { 800:'#1a1a2e', 900:'#0f0f1a', 950:'#080812' }
           }
         }
       }
     }
   </script>
-
-  <!-- Schema.org LocalBusiness -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "ProfessionalService",
-    "name": "Twin Cities Web Co",
-    "description": "Local web design, SEO, and Google Business optimization for small businesses in the Twin Cities.",
-    "address": {
-      "@type": "PostalAddress",
-      "addressLocality": "Saint Paul",
-      "addressRegion": "MN",
-      "postalCode": "55104",
-      "addressCountry": "US"
-    },
-    "areaServed": ["Saint Paul", "Minneapolis", "Twin Cities Metro"],
-    "priceRange": "$$",
-    "openingHours": "Mo-Fr 08:00-18:00",
-    "email": "gorillagrad9@gmail.com"
-  }
-  </script>
-
   <style>
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(30px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .fade-up { opacity: 0; }
-    .fade-up.visible { animation: fadeUp 0.6s ease-out forwards; }
-    .fade-up.visible:nth-child(2) { animation-delay: 0.1s; }
-    .fade-up.visible:nth-child(3) { animation-delay: 0.2s; }
-    .fade-up.visible:nth-child(4) { animation-delay: 0.3s; }
+    body { background: #0f0f1a; color: #e2e8f0; }
+    .fade-in { opacity: 0; transform: translateY(30px); transition: opacity 0.6s ease, transform 0.6s ease; }
+    .fade-in.visible { opacity: 1; transform: translateY(0); }
+    .gradient-text { background: linear-gradient(135deg, #06b6d4, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .card-hover { transition: transform 0.3s ease, box-shadow 0.3s ease; }
+    .card-hover:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(6,182,212,0.15); }
+    .btn-primary { background: linear-gradient(135deg, #06b6d4, #3b82f6); transition: all 0.3s ease; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(6,182,212,0.3); }
   </style>
 </head>
-<body class="bg-dark-950 text-gray-200 font-sans antialiased">
+<body class="font-sans antialiased">
 
-  <!-- ================================================================== -->
-  <!-- NAVBAR                                                             -->
-  <!-- ================================================================== -->
-  <nav class="fixed top-0 w-full z-50 bg-dark-900/80 backdrop-blur-md border-b border-white/5">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-      <a href="#" class="text-xl font-bold text-brand-400 tracking-tight">Twin Cities Web Co</a>
-      <div class="hidden sm:flex gap-6 text-sm text-gray-400">
-        <a href="#services" class="hover:text-brand-300 transition">Services</a>
-        <a href="#why-us" class="hover:text-brand-300 transition">Why Us</a>
-        <a href="#testimonials" class="hover:text-brand-300 transition">Testimonials</a>
-        <a href="#contact" class="hover:text-brand-300 transition">Contact</a>
+  <!-- NAV -->
+  <nav class="fixed top-0 w-full z-50 bg-dark-900/90 backdrop-blur border-b border-white/5">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+      <a href="#" class="text-xl font-bold gradient-text">CG Web Design</a>
+      <div class="hidden md:flex gap-8 text-sm text-gray-400">
+        <a href="#services" class="hover:text-brand-400 transition">Services</a>
+        <a href="#process" class="hover:text-brand-400 transition">Process</a>
+        <a href="#results" class="hover:text-brand-400 transition">Results</a>
+        <a href="#pricing" class="hover:text-brand-400 transition">Pricing</a>
+        <a href="#contact" class="btn-primary px-4 py-2 rounded-lg text-white font-medium">Free Audit</a>
       </div>
-      <a href="#contact" class="text-sm font-semibold bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-lg transition">Free Audit</a>
+      <button id="menu-toggle" class="md:hidden text-gray-400 hover:text-white">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+    <div id="mobile-menu" class="hidden md:hidden bg-dark-900 border-t border-white/5 px-6 py-4 space-y-3">
+      <a href="#services" class="block text-gray-400 hover:text-white">Services</a>
+      <a href="#process" class="block text-gray-400 hover:text-white">Process</a>
+      <a href="#results" class="block text-gray-400 hover:text-white">Results</a>
+      <a href="#pricing" class="block text-gray-400 hover:text-white">Pricing</a>
+      <a href="#contact" class="block btn-primary text-center px-4 py-2 rounded-lg text-white font-medium">Free Audit</a>
     </div>
   </nav>
 
-  <!-- ================================================================== -->
-  <!-- HERO                                                               -->
-  <!-- ================================================================== -->
-  <header class="relative pt-32 pb-20 sm:pt-40 sm:pb-28 overflow-hidden">
-    <!-- Gradient background -->
-    <div class="absolute inset-0 bg-gradient-to-br from-dark-900 via-dark-950 to-brand-900/20"></div>
-    <div class="absolute top-20 right-0 w-96 h-96 bg-brand-600/10 rounded-full blur-3xl"></div>
-    <div class="absolute bottom-0 left-10 w-72 h-72 bg-brand-400/5 rounded-full blur-3xl"></div>
-
-    <div class="relative max-w-4xl mx-auto px-4 sm:px-6 text-center">
-      <p class="text-brand-400 font-semibold text-sm tracking-widest uppercase mb-4">Saint Paul &middot; Minneapolis &middot; Twin Cities Metro</p>
-      <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white leading-tight mb-6">
-        Helping Local Businesses<br class="hidden sm:block"> <span class="text-brand-400">Get Found Online</span>
+  <!-- HERO -->
+  <section class="min-h-screen flex items-center justify-center px-6 pt-20">
+    <div class="max-w-4xl text-center fade-in">
+      <p class="text-brand-400 font-medium mb-4 tracking-wider uppercase text-sm">Twin Cities Web Design</p>
+      <h1 class="text-5xl md:text-7xl font-bold leading-tight mb-6">
+        We Build Websites That <span class="gradient-text">Actually Convert</span>
       </h1>
-      <p class="text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto mb-10">
-        Modern websites, Google optimization, and proven SEO strategies that turn searches into customers. Built by your neighbors in Saint Paul.
+      <p class="text-xl text-gray-400 max-w-2xl mx-auto mb-10">
+        Your website should be your hardest-working employee. We help small businesses in the Twin Cities get more customers, more calls, and more revenue through modern, fast, conversion-optimized web design.
       </p>
       <div class="flex flex-col sm:flex-row gap-4 justify-center">
-        <a href="#contact" class="inline-flex items-center justify-center bg-brand-600 hover:bg-brand-500 text-white font-semibold px-8 py-3.5 rounded-xl text-lg transition shadow-lg shadow-brand-600/20">
-          Get Your Free Website Audit
-          <svg class="ml-2 w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
-        </a>
-        <a href="#services" class="inline-flex items-center justify-center border border-white/10 hover:border-brand-400/40 text-gray-300 hover:text-white font-semibold px-8 py-3.5 rounded-xl text-lg transition">
-          See Our Services
-        </a>
+        <a href="#contact" class="btn-primary px-8 py-4 rounded-xl text-lg font-semibold text-white">Get Your Free Site Audit</a>
+        <a href="#results" class="px-8 py-4 rounded-xl text-lg font-semibold text-gray-400 border border-gray-700 hover:border-brand-400 hover:text-white transition">See Results</a>
       </div>
     </div>
-  </header>
+  </section>
 
-  <!-- ================================================================== -->
-  <!-- SERVICES                                                           -->
-  <!-- ================================================================== -->
-  <section id="services" class="py-20 sm:py-28 bg-dark-900/50">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6">
-      <div class="text-center mb-16">
-        <p class="text-brand-400 font-semibold text-sm tracking-widest uppercase mb-3">What We Do</p>
-        <h2 class="text-3xl sm:text-4xl font-bold text-white">Services That Drive Real Results</h2>
+  <!-- SERVICES -->
+  <section id="services" class="py-24 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16 fade-in">
+        <p class="text-brand-400 font-medium mb-2 tracking-wider uppercase text-sm">What We Do</p>
+        <h2 class="text-4xl font-bold">Services Built for Growth</h2>
       </div>
-
-      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <!-- Card 1 -->
-        <div class="fade-up bg-dark-900 border border-white/5 rounded-2xl p-6 hover:border-brand-600/30 transition group">
-          <div class="w-12 h-12 bg-brand-600/10 rounded-xl flex items-center justify-center mb-5 group-hover:bg-brand-600/20 transition">
-            <svg class="w-6 h-6 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25"/></svg>
+      <div class="grid md:grid-cols-3 gap-8">
+        <div class="bg-dark-800 rounded-2xl p-8 border border-white/5 card-hover fade-in">
+          <div class="w-12 h-12 bg-brand-400/10 rounded-xl flex items-center justify-center mb-6">
+            <svg class="w-6 h-6 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
           </div>
-          <h3 class="text-lg font-bold text-white mb-2">Website Design & Rebuild</h3>
-          <p class="text-gray-400 text-sm leading-relaxed">Modern, mobile-friendly sites that load fast and convert visitors into paying customers. No cookie-cutter templates.</p>
+          <h3 class="text-xl font-bold mb-3">Website Redesign</h3>
+          <p class="text-gray-400">Modern, mobile-first designs that load in under 2 seconds and turn visitors into paying customers. No templates -- custom built for your business.</p>
         </div>
-
-        <!-- Card 2 -->
-        <div class="fade-up bg-dark-900 border border-white/5 rounded-2xl p-6 hover:border-brand-600/30 transition group">
-          <div class="w-12 h-12 bg-brand-600/10 rounded-xl flex items-center justify-center mb-5 group-hover:bg-brand-600/20 transition">
-            <svg class="w-6 h-6 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"/></svg>
+        <div class="bg-dark-800 rounded-2xl p-8 border border-white/5 card-hover fade-in">
+          <div class="w-12 h-12 bg-brand-400/10 rounded-xl flex items-center justify-center mb-6">
+            <svg class="w-6 h-6 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
           </div>
-          <h3 class="text-lg font-bold text-white mb-2">Google Business Optimization</h3>
-          <p class="text-gray-400 text-sm leading-relaxed">Get found in Google Maps and local search results. We optimize your listing so nearby customers choose you first.</p>
+          <h3 class="text-xl font-bold mb-3">SEO Optimization</h3>
+          <p class="text-gray-400">Get found on Google when locals search for your services. Technical SEO, local optimization, Google Business, and content strategy that drives traffic.</p>
         </div>
-
-        <!-- Card 3 -->
-        <div class="fade-up bg-dark-900 border border-white/5 rounded-2xl p-6 hover:border-brand-600/30 transition group">
-          <div class="w-12 h-12 bg-brand-600/10 rounded-xl flex items-center justify-center mb-5 group-hover:bg-brand-600/20 transition">
-            <svg class="w-6 h-6 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v-2.5m3 2.5v-5.5m3 5.5v-3.5"/></svg>
+        <div class="bg-dark-800 rounded-2xl p-8 border border-white/5 card-hover fade-in">
+          <div class="w-12 h-12 bg-brand-400/10 rounded-xl flex items-center justify-center mb-6">
+            <svg class="w-6 h-6 text-brand-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
           </div>
-          <h3 class="text-lg font-bold text-white mb-2">SEO & Content Strategy</h3>
-          <p class="text-gray-400 text-sm leading-relaxed">Rank higher for the searches your customers are actually making. Data-driven SEO that compounds over time.</p>
-        </div>
-
-        <!-- Card 4 -->
-        <div class="fade-up bg-dark-900 border border-white/5 rounded-2xl p-6 hover:border-brand-600/30 transition group">
-          <div class="w-12 h-12 bg-brand-600/10 rounded-xl flex items-center justify-center mb-5 group-hover:bg-brand-600/20 transition">
-            <svg class="w-6 h-6 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0l-4.725 2.885a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"/></svg>
-          </div>
-          <h3 class="text-lg font-bold text-white mb-2">Review Management</h3>
-          <p class="text-gray-400 text-sm leading-relaxed">Build and showcase your 5-star reputation. We help you generate reviews and respond to them professionally.</p>
+          <h3 class="text-xl font-bold mb-3">Digital Strategy</h3>
+          <p class="text-gray-400">Analytics, conversion optimization, and an ongoing growth partnership. We don't just build and leave -- we help you grow month over month.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- WHY US -->
-  <section id="why-us" class="py-20 sm:py-28">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6">
-      <div class="text-center mb-16">
-        <p class="text-brand-400 font-semibold text-sm tracking-widest uppercase mb-3">Why Twin Cities Web Co</p>
-        <h2 class="text-3xl sm:text-4xl font-bold text-white">Built Different From Big Agencies</h2>
+  <!-- PROCESS -->
+  <section id="process" class="py-24 px-6 bg-dark-950">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16 fade-in">
+        <p class="text-brand-400 font-medium mb-2 tracking-wider uppercase text-sm">How It Works</p>
+        <h2 class="text-4xl font-bold">Simple. Transparent. Effective.</h2>
       </div>
-      <div class="grid sm:grid-cols-3 gap-8">
-        <div class="fade-up text-center">
-          <div class="w-16 h-16 bg-brand-600/10 rounded-2xl flex items-center justify-center mx-auto mb-5">
-            <svg class="w-8 h-8 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>
+      <div class="grid md:grid-cols-4 gap-8">
+        <div class="text-center fade-in">
+          <div class="w-16 h-16 bg-brand-400/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span class="text-2xl font-bold gradient-text">1</span>
           </div>
-          <h3 class="text-xl font-bold text-white mb-3">Local &amp; Personal</h3>
-          <p class="text-gray-400 leading-relaxed">We are your neighbors in Saint Paul, not a faceless agency in another state. You will always talk to a real person who knows the Twin Cities market.</p>
+          <h3 class="text-lg font-bold mb-2">Free Audit</h3>
+          <p class="text-gray-400 text-sm">We analyze your current site and show you exactly what is costing you customers -- with screenshots, data, and competitor comparisons.</p>
         </div>
-        <div class="fade-up text-center">
-          <div class="w-16 h-16 bg-brand-600/10 rounded-2xl flex items-center justify-center mx-auto mb-5">
-            <svg class="w-8 h-8 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/></svg>
+        <div class="text-center fade-in">
+          <div class="w-16 h-16 bg-brand-400/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span class="text-2xl font-bold gradient-text">2</span>
           </div>
-          <h3 class="text-xl font-bold text-white mb-3">Results-Driven</h3>
-          <p class="text-gray-400 leading-relaxed">We track every lead, click, and call so you see real ROI. Monthly reports show exactly how your investment is paying off.</p>
+          <h3 class="text-lg font-bold mb-2">Custom Proposal</h3>
+          <p class="text-gray-400 text-sm">Detailed scope, realistic timeline, and transparent pricing tailored to your business. No surprises, no hidden fees.</p>
         </div>
-        <div class="fade-up text-center">
-          <div class="w-16 h-16 bg-brand-600/10 rounded-2xl flex items-center justify-center mx-auto mb-5">
-            <svg class="w-8 h-8 text-brand-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg>
+        <div class="text-center fade-in">
+          <div class="w-16 h-16 bg-brand-400/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span class="text-2xl font-bold gradient-text">3</span>
           </div>
-          <h3 class="text-xl font-bold text-white mb-3">No Long Contracts</h3>
-          <p class="text-gray-400 leading-relaxed">Month-to-month service, cancel anytime. We earn your business every month -- if we are not delivering results, you walk away free.</p>
+          <h3 class="text-lg font-bold mb-2">Build & Launch</h3>
+          <p class="text-gray-400 text-sm">We build, you review, we refine. Unlimited revisions until you love it. Then we launch and make sure everything is perfect.</p>
+        </div>
+        <div class="text-center fade-in">
+          <div class="w-16 h-16 bg-brand-400/10 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span class="text-2xl font-bold gradient-text">4</span>
+          </div>
+          <h3 class="text-lg font-bold mb-2">Grow Together</h3>
+          <p class="text-gray-400 text-sm">Ongoing support, monthly analytics reports, and continuous optimization to keep your site performing and growing.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- TESTIMONIALS -->
-  <section id="testimonials" class="py-20 sm:py-28 bg-dark-900/50">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6">
-      <div class="text-center mb-16">
-        <p class="text-brand-400 font-semibold text-sm tracking-widest uppercase mb-3">What Our Clients Say</p>
-        <h2 class="text-3xl sm:text-4xl font-bold text-white">Real Results for Real Businesses</h2>
+  <!-- RESULTS -->
+  <section id="results" class="py-24 px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16 fade-in">
+        <p class="text-brand-400 font-medium mb-2 tracking-wider uppercase text-sm">Real Results</p>
+        <h2 class="text-4xl font-bold">What We Have Built</h2>
       </div>
-      <div class="grid sm:grid-cols-3 gap-6">
-        <div class="fade-up bg-dark-900 border border-white/5 rounded-2xl p-6">
-          <div class="flex gap-1 mb-4" aria-label="5 stars">
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+      <div class="grid md:grid-cols-3 gap-8">
+        <div class="bg-dark-800 rounded-2xl overflow-hidden border border-white/5 card-hover fade-in">
+          <div class="h-48 bg-gradient-to-br from-brand-600/20 to-blue-600/20 flex items-center justify-center">
+            <span class="text-6xl font-bold gradient-text">3x</span>
           </div>
-          <blockquote class="text-gray-300 leading-relaxed mb-4">"Our phone started ringing within 2 weeks of the new site going live. We went from maybe 1 call a day to 5 or 6. Best money we have spent on the business."</blockquote>
-          <div class="border-t border-white/5 pt-4">
-            <p class="font-semibold text-white text-sm">Mike R.</p>
-            <p class="text-gray-500 text-xs">Plumber -- Woodbury, MN</p>
+          <div class="p-8">
+            <p class="text-brand-400 text-sm font-medium mb-1">HVAC Company</p>
+            <h3 class="text-lg font-bold mb-2">3x More Online Bookings</h3>
+            <p class="text-gray-400 text-sm">Outdated site was losing mobile customers. Full redesign with online booking system, Google Business optimization, and local SEO. Bookings tripled in 90 days.</p>
           </div>
         </div>
-        <div class="fade-up bg-dark-900 border border-white/5 rounded-2xl p-6">
-          <div class="flex gap-1 mb-4" aria-label="5 stars">
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+        <div class="bg-dark-800 rounded-2xl overflow-hidden border border-white/5 card-hover fade-in">
+          <div class="h-48 bg-gradient-to-br from-brand-600/20 to-blue-600/20 flex items-center justify-center">
+            <span class="text-6xl font-bold gradient-text">+180%</span>
           </div>
-          <blockquote class="text-gray-300 leading-relaxed mb-4">"Charles rebuilt our site and we went from page 3 to the top of Google Maps in about a month. We are booked out 2 weeks now -- never happened before."</blockquote>
-          <div class="border-t border-white/5 pt-4">
-            <p class="font-semibold text-white text-sm">Sarah K.</p>
-            <p class="text-gray-500 text-xs">Salon Owner -- Saint Paul, MN</p>
+          <div class="p-8">
+            <p class="text-brand-400 text-sm font-medium mb-1">Auto Body Shop</p>
+            <h3 class="text-lg font-bold mb-2">180% More Quote Requests</h3>
+            <p class="text-gray-400 text-sm">No online presence beyond a Facebook page. Built a professional site with before/after gallery, quote form, and review integration. Quote requests up 180%.</p>
           </div>
         </div>
-        <div class="fade-up bg-dark-900 border border-white/5 rounded-2xl p-6">
-          <div class="flex gap-1 mb-4" aria-label="5 stars">
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
-            <svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+        <div class="bg-dark-800 rounded-2xl overflow-hidden border border-white/5 card-hover fade-in">
+          <div class="h-48 bg-gradient-to-br from-brand-600/20 to-blue-600/20 flex items-center justify-center">
+            <span class="text-6xl font-bold gradient-text">#1</span>
           </div>
-          <blockquote class="text-gray-300 leading-relaxed mb-4">"The free audit showed us exactly what we were missing. No hard sell, just honest advice. Then the results spoke for themselves -- 3x more quote requests."</blockquote>
-          <div class="border-t border-white/5 pt-4">
-            <p class="font-semibold text-white text-sm">David L.</p>
-            <p class="text-gray-500 text-xs">Auto Shop Owner -- Minneapolis, MN</p>
+          <div class="p-8">
+            <p class="text-brand-400 text-sm font-medium mb-1">Cleaning Service</p>
+            <h3 class="text-lg font-bold mb-2">Page 1 on Google in 60 Days</h3>
+            <p class="text-gray-400 text-sm">Invisible on Google despite great reviews. Technical SEO overhaul, local content strategy, and Google Business optimization. Now ranking #1 for key local searches.</p>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- CONTACT -->
-  <section id="contact" class="py-20 sm:py-28">
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 text-center">
-      <div class="bg-gradient-to-br from-brand-900/30 to-dark-900 border border-brand-600/20 rounded-3xl p-8 sm:p-12">
-        <p class="text-brand-400 font-semibold text-sm tracking-widest uppercase mb-3">Get Started</p>
-        <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4">Ready to Grow Your Business Online?</h2>
-        <p class="text-gray-400 mb-8 max-w-xl mx-auto">Get a free, no-obligation website audit. We will show you exactly what is working, what is not, and how to fix it -- in plain English.</p>
-        <a href="mailto:gorillagrad9@gmail.com?subject=Free%20Website%20Audit%20Request" class="inline-flex items-center justify-center bg-brand-600 hover:bg-brand-500 text-white font-semibold px-8 py-3.5 rounded-xl text-lg transition shadow-lg shadow-brand-600/20 mb-8">
-          Request Your Free Audit
-          <svg class="ml-2 w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg>
-        </a>
-        <div class="grid sm:grid-cols-3 gap-6 text-sm text-gray-400 border-t border-white/5 pt-8">
-          <div>
-            <p class="font-semibold text-white mb-1">Email</p>
-            <a href="mailto:gorillagrad9@gmail.com" class="hover:text-brand-300 transition">gorillagrad9@gmail.com</a>
-          </div>
-          <div>
-            <p class="font-semibold text-white mb-1">Hours</p>
-            <p>Mon-Fri 8am-6pm CT</p>
-          </div>
-          <div>
-            <p class="font-semibold text-white mb-1">Location</p>
-            <p>Saint Paul, MN 55104</p>
-          </div>
+  <!-- PRICING -->
+  <section id="pricing" class="py-24 px-6 bg-dark-950">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16 fade-in">
+        <p class="text-brand-400 font-medium mb-2 tracking-wider uppercase text-sm">Investment</p>
+        <h2 class="text-4xl font-bold">Transparent Pricing, Real Value</h2>
+        <p class="text-gray-400 mt-4 max-w-2xl mx-auto">Every project is custom, but here is what to expect. All packages include mobile optimization, basic SEO, and 30 days of post-launch support.</p>
+      </div>
+      <div class="grid md:grid-cols-3 gap-8">
+        <div class="bg-dark-800 rounded-2xl p-8 border border-white/5 card-hover fade-in">
+          <h3 class="text-lg font-bold mb-1">Starter</h3>
+          <p class="text-3xl font-bold gradient-text mb-2">$1,500 - $3,000</p>
+          <p class="text-gray-400 text-sm mb-6">Perfect for refreshing an existing site</p>
+          <ul class="space-y-3 text-sm text-gray-300">
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Visual refresh and modernization</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Mobile responsive optimization</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Speed optimization</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Basic on-page SEO</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Contact form setup</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> 30 days support</li>
+          </ul>
+          <a href="#contact" class="block mt-8 text-center py-3 rounded-xl border border-brand-400 text-brand-400 hover:bg-brand-400/10 transition font-medium">Get Started</a>
         </div>
+        <div class="bg-dark-800 rounded-2xl p-8 border-2 border-brand-400 card-hover fade-in relative">
+          <span class="absolute -top-3 left-1/2 -translate-x-1/2 bg-brand-400 text-dark-900 text-xs font-bold px-4 py-1 rounded-full">MOST POPULAR</span>
+          <h3 class="text-lg font-bold mb-1">Professional</h3>
+          <p class="text-3xl font-bold gradient-text mb-2">$3,000 - $7,000</p>
+          <p class="text-gray-400 text-sm mb-6">Complete redesign with results</p>
+          <ul class="space-y-3 text-sm text-gray-300">
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Full custom design from scratch</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Copywriting and content strategy</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Advanced SEO package</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Google Business optimization</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Analytics and conversion tracking</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Custom features (booking, forms)</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> 60 days support</li>
+          </ul>
+          <a href="#contact" class="block mt-8 text-center py-3 rounded-xl btn-primary text-white font-medium">Get Started</a>
+        </div>
+        <div class="bg-dark-800 rounded-2xl p-8 border border-white/5 card-hover fade-in">
+          <h3 class="text-lg font-bold mb-1">Enterprise</h3>
+          <p class="text-3xl font-bold gradient-text mb-2">$7,000 - $15,000</p>
+          <p class="text-gray-400 text-sm mb-6">Full digital transformation</p>
+          <ul class="space-y-3 text-sm text-gray-300">
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Everything in Professional</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> E-commerce integration</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Custom API integrations</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Content management system</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Ongoing content strategy</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> Monthly performance reports</li>
+            <li class="flex items-start gap-2"><span class="text-brand-400 mt-0.5">&#10003;</span> 90 days priority support</li>
+          </ul>
+          <a href="#contact" class="block mt-8 text-center py-3 rounded-xl border border-brand-400 text-brand-400 hover:bg-brand-400/10 transition font-medium">Get Started</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA / CONTACT -->
+  <section id="contact" class="py-24 px-6">
+    <div class="max-w-3xl mx-auto text-center fade-in">
+      <h2 class="text-4xl md:text-5xl font-bold mb-6">Ready to Stop <span class="gradient-text">Losing Customers</span> to Your Website?</h2>
+      <p class="text-xl text-gray-400 mb-10">Get a free, no-obligation audit of your current site. We will show you exactly what is holding you back and what it would take to fix it.</p>
+      <div class="bg-dark-800 rounded-2xl p-8 border border-white/5">
+        <div class="grid md:grid-cols-2 gap-6 mb-6">
+          <input type="text" placeholder="Your Name" class="bg-dark-900 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:border-brand-400 focus:outline-none transition">
+          <input type="email" placeholder="Your Email" class="bg-dark-900 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:border-brand-400 focus:outline-none transition">
+        </div>
+        <input type="url" placeholder="Your Website URL" class="w-full bg-dark-900 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:border-brand-400 focus:outline-none transition mb-6">
+        <a href="mailto:gorillagrad9@gmail.com?subject=Free%20Site%20Audit%20Request" class="block w-full btn-primary py-4 rounded-xl text-lg font-semibold text-white text-center">Send My Free Audit Request</a>
+        <p class="text-gray-500 text-sm mt-4">Or email directly: <a href="mailto:gorillagrad9@gmail.com" class="text-brand-400 hover:underline">gorillagrad9@gmail.com</a></p>
       </div>
     </div>
   </section>
 
   <!-- FOOTER -->
-  <footer class="border-t border-white/5 py-8">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-500">
-      <p>Copyright 2026 Twin Cities Web Co. Saint Paul, MN. All rights reserved.</p>
-      <div class="flex gap-6">
-        <a href="#services" class="hover:text-brand-300 transition">Services</a>
-        <a href="#contact" class="hover:text-brand-300 transition">Contact</a>
+  <footer class="py-12 px-6 border-t border-white/5">
+    <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+      <div class="text-center md:text-left">
+        <p class="font-bold gradient-text text-lg">CG Web Design</p>
+        <p class="text-gray-500 text-sm">Twin Cities, MN</p>
       </div>
+      <div class="flex gap-6 text-sm text-gray-500">
+        <a href="#services" class="hover:text-white transition">Services</a>
+        <a href="#pricing" class="hover:text-white transition">Pricing</a>
+        <a href="#contact" class="hover:text-white transition">Contact</a>
+      </div>
+      <p class="text-gray-600 text-sm">2026 Charles G Web Design. All rights reserved.</p>
     </div>
   </footer>
 
-  <!-- Scroll animation observer -->
+  <!-- SCRIPTS -->
   <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      var observer = new IntersectionObserver(function(entries) {
-        entries.forEach(function(entry) {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('visible');
-          }
-        });
-      }, { threshold: 0.1 });
-      document.querySelectorAll('.fade-up').forEach(function(el) {
-        observer.observe(el);
-      });
+    // Mobile menu
+    document.getElementById('menu-toggle').addEventListener('click', () => {
+      document.getElementById('mobile-menu').classList.toggle('hidden');
     });
-  </script>
+    document.querySelectorAll('#mobile-menu a').forEach(link => {
+      link.addEventListener('click', () => document.getElementById('mobile-menu').classList.add('hidden'));
+    });
 
+    // Scroll animations
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+  </script>
 </body>
 </html>
