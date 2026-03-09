@@ -1,93 +1,411 @@
-"""
-email_bot.py
+""" 
+email_bot.py  -- LeadGen Bot v3
 AI-powered cold email personalizer with CAN-SPAM compliance.
-Generates personalized outreach drafts via Claude -- does NOT auto-send.
-Drafts are sent to Telegram for human approval before any email goes out.
-
-Sending flow:
-  1. Generate AI draft for each lead (Claude claude-3-5-haiku-latest)
-  2. Validate email address format
-  3. Append CAN-SPAM required footer (physical address + unsubscribe)
-  4. Return drafts for Telegram approval queue
-  5. Only approved drafts get sent (via send_approved_email)
+Features: industry-specific templates, A/B subject lines, 3-email drip sequences,
+Google review personalization. Drafts via Claude -- does NOT auto-send.
 """
 
 import os
 import re
-import csv
 import json
 import time
-import smtplib
 import datetime
-import tempfile
-import shutil
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import requests
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-
-LEADS_FILE = "leads.csv"
-CONTACTED_FILE = "contacted.csv"
-DRAFTS_FILE = "drafts.json"
-MAX_DRAFTS_PER_RUN = 25
-
-ANTHROPIC_ENDPOINT = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
-
-CONTACTED_COLUMNS = [
-    "name", "email", "niche", "city", "score", "sent_date", "subject"
-]
-
-# ---------------------------------------------------------------------------
-# CAN-SPAM Compliance Footer
-# ---------------------------------------------------------------------------
-
-CAN_SPAM_FOOTER = (
-    "\n\n---\n"
-    "Twin Cities Web Co | Saint Paul, MN 55104\n"
-    "You're receiving this because your business was found in a public directory.\n"
-    "To stop future emails, reply with 'unsubscribe' and we'll remove you immediately.\n"
-    "This is a one-time outreach -- we do not send follow-ups without your permission."
+from config import (
+    ANTHROPIC_API_KEY, ANTHROPIC_ENDPOINT, ANTHROPIC_MODEL,
+    GMAIL_ADDRESS, MAX_DRAFTS_PER_RUN, CAN_SPAM_FOOTER,
+    INDUSTRY_ANGLES, MIN_SCORE_FOR_DRAFT, FOLLOW_UP_RULES,
+)
+from sheets_client import (
+    is_connected as sheets_connected,
+    get_leads_by_stage, update_lead_multiple_fields,
+    get_leads_needing_followup,
 )
 
 
 # ---------------------------------------------------------------------------
-# Email validation (lightweight, no paid API)
+# Google Reviews scraping (for personalization)
+# ---------------------------------------------------------------------------
+
+def scrape_google_reviews(business_name, city):
+    """Scrape a few Google reviews for personalization hooks."""
+    try:
+        import httpx
+        from bs4 import BeautifulSoup
+        from urllib.parse import quote_plus
+
+        query = "{} {} reviews".format(business_name, city)
+        url = "https://www.google.com/search?q={}".format(quote_plus(query))
+
+        client = httpx.Client(
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+            timeout=15,
+            follow_redirects=True,
+        )
+        resp = client.get(url)
+        client.close()
+
+        if resp.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        reviews = []
+
+        # Look for review snippets in Google search results
+        for span in soup.find_all("span", class_="review-snippet"):
+            text = span.get_text(strip=True)
+            if len(text) > 20:
+                reviews.append(text[:200])
+
+        # Also check for data-review-text attributes
+        for div in soup.find_all(attrs={"data-review-id": True}):
+            text = div.get_text(strip=True)
+            if len(text) > 20:
+                reviews.append(text[:200])
+
+        # Fallback: look for quoted text that looks like reviews
+        for q_tag in soup.find_all("q"):
+            text = q_tag.get_text(strip=True)
+            if len(text) > 20:
+                reviews.append(text[:200])
+
+        return reviews[:3]  # Max 3 reviews for context
+    except Exception as e:
+        print("[EMAIL] Review scraping failed for {}: {}".format(business_name, e))
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Industry detection
+# ---------------------------------------------------------------------------
+
+def detect_industry(niche):
+    """Match a lead's niche to an industry template."""
+    niche_lower = niche.lower().strip()
+
+    # Direct match
+    if niche_lower in INDUSTRY_ANGLES:
+        return niche_lower
+
+    # Fuzzy matching
+    keyword_map = {
+        "restaurant": ["restaurant", "cafe", "diner", "bistro", "eatery", "food", "pizza", "sushi", "bakery", "catering"],
+        "hair salon": ["salon", "hair", "barber", "beauty", "spa", "nail"],
+        "plumber": ["plumb", "pipe", "drain"],
+        "electrician": ["electric", "wiring", "electrical"],
+        "auto repair": ["auto", "car", "mechanic", "tire", "transmission", "body shop", "auto detailing"],
+        "landscaping": ["landscape", "lawn", "garden", "tree", "mowing"],
+        "cleaning service": ["clean", "maid", "janitorial", "housekeep"],
+        "roofing contractor": ["roof", "gutter", "siding"],
+        "hvac": ["hvac", "heating", "cooling", "furnace", "air condition"],
+        "general contractor": ["contractor", "remodel", "renovation", "construction", "handyman"],
+        "dentist": ["dentist", "dental", "orthodont"],
+        "chiropractor": ["chiropractic", "chiropractor", "spine", "adjustment"],
+    }
+
+    for industry, keywords in keyword_map.items():
+        for kw in keywords:
+            if kw in niche_lower:
+                return industry
+
+    return "default"
+
+
+# ---------------------------------------------------------------------------
+# Claude API -- Email drafting
+# ---------------------------------------------------------------------------
+
+def _call_claude(prompt, max_tokens=1500):
+    """Call Claude API and return response text."""
+    if not ANTHROPIC_API_KEY:
+        print("[EMAIL] No ANTHROPIC_API_KEY -- skipping AI generation")
+        return None
+
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    try:
+        resp = requests.post(ANTHROPIC_ENDPOINT, headers=headers, json=payload, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["content"][0]["text"]
+    except requests.exceptions.RequestException as e:
+        print("[EMAIL] Claude API error: {}".format(e))
+        return None
+    except (KeyError, IndexError) as e:
+        print("[EMAIL] Claude response parse error: {}".format(e))
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Draft generation -- Initial outreach with A/B subjects
+# ---------------------------------------------------------------------------
+
+def generate_initial_draft(lead, reviews=None):
+    """Generate initial cold email with A/B subject lines and industry-specific content."""
+    name = lead.get("name", "Business Owner")
+    niche = lead.get("niche", "")
+    city = lead.get("city", "")
+    website = lead.get("website", "")
+    rating = lead.get("rating", "")
+    review_count = lead.get("reviews", "")
+    ssl = lead.get("website_ssl", "unknown")
+    mobile = lead.get("website_mobile", "unknown")
+    blog = lead.get("website_blog", "unknown")
+    competition = lead.get("competition_density", "unknown")
+
+    industry = detect_industry(niche)
+    angles = INDUSTRY_ANGLES.get(industry, INDUSTRY_ANGLES["default"])
+
+    # Build context for Claude
+    review_context = ""
+    if reviews:
+        review_context = "\nRecent customer reviews:\n" + "\n".join(["- \"{}\"".format(r) for r in reviews[:3]])
+
+    website_issues = []
+    if ssl == "no":
+        website_issues.append("no SSL/HTTPS (shows 'Not Secure' in browsers)")
+    if mobile == "no":
+        website_issues.append("not mobile-optimized (loses 60% of traffic)")
+    if blog == "no":
+        website_issues.append("no blog or content section (missing SEO opportunity)")
+
+    website_context = ""
+    if website_issues:
+        website_context = "\nWebsite issues found: " + "; ".join(website_issues)
+
+    competition_context = ""
+    if competition in ("high", "medium"):
+        competition_context = "\nCompetition level: {} (they need to stand out)".format(competition)
+
+    prompt = """You are a friendly, professional web services consultant writing a cold outreach email to a local business.
+
+BUSINESS INFO:
+- Name: {name}
+- Industry: {industry}
+- City: {city}
+- Website: {website}
+- Rating: {rating} ({review_count} reviews)
+- Industry pain points: {pain_points}{review_context}{website_context}{competition_context}
+
+INSTRUCTIONS:
+1. Write TWO different subject lines (labeled SUBJECT_A and SUBJECT_B). Make them different approaches:
+   - Subject A: Direct/benefit-focused
+   - Subject B: Question/curiosity-driven
+2. Write ONE email body that:
+   - Opens with a personalized observation about their business (use review quotes if available)
+   - Mentions 1-2 specific pain points relevant to their industry
+   - If website issues were found, briefly mention ONE specific improvement
+   - Keeps it under 150 words
+   - Ends with a soft CTA (free audit, quick call, no pressure)
+   - Tone: friendly, local, not salesy
+   - Sign from: Charles G, Twin Cities Web Co
+3. Do NOT include any greeting like "Dear" -- start with their business name or a hook
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+SUBJECT_A: [first subject line]
+SUBJECT_B: [second subject line]
+BODY:
+[email body here]
+
+Hook suggestion: {hook}""".format(
+        name=name, industry=industry, city=city, website=website,
+        rating=rating, review_count=review_count,
+        pain_points=", ".join(angles["pain_points"]),
+        review_context=review_context,
+        website_context=website_context,
+        competition_context=competition_context,
+        hook=angles["hook"].format(name=name),
+    )
+
+    response = _call_claude(prompt)
+    if not response:
+        return None
+
+    # Parse response
+    draft = _parse_draft_response(response, lead)
+    return draft
+
+
+def _parse_draft_response(response, lead):
+    """Parse Claude's response into structured draft dict."""
+    subject_a = ""
+    subject_b = ""
+    body = ""
+
+    lines = response.strip().split("\n")
+    in_body = False
+    body_lines = []
+
+    for line in lines:
+        if line.startswith("SUBJECT_A:"):
+            subject_a = line.replace("SUBJECT_A:", "").strip()
+        elif line.startswith("SUBJECT_B:"):
+            subject_b = line.replace("SUBJECT_B:", "").strip()
+        elif line.startswith("BODY:"):
+            in_body = True
+        elif in_body:
+            body_lines.append(line)
+
+    body = "\n".join(body_lines).strip()
+
+    if not body:
+        # Fallback: use entire response as body
+        body = response.strip()
+        subject_a = "Quick question about {}'s online presence".format(lead.get("name", "your business"))
+        subject_b = "Noticed something about {} on Google".format(lead.get("name", "your business"))
+
+    # Add CAN-SPAM footer
+    body += CAN_SPAM_FOOTER
+
+    return {
+        "lead_name": lead.get("name", ""),
+        "to_email": lead.get("email", ""),
+        "from_email": GMAIL_ADDRESS,
+        "subject_a": subject_a,
+        "subject_b": subject_b,
+        "body": body,
+        "niche": lead.get("niche", ""),
+        "city": lead.get("city", ""),
+        "score": lead.get("score", 0),
+        "industry": detect_industry(lead.get("niche", "")),
+        "sequence_num": 1,
+        "website_ssl": lead.get("website_ssl", ""),
+        "website_mobile": lead.get("website_mobile", ""),
+        "competition": lead.get("competition_density", ""),
+        "generated_at": datetime.datetime.now().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Follow-up sequence generation
+# ---------------------------------------------------------------------------
+
+def generate_followup_draft(lead, sequence_num):
+    """Generate follow-up email (sequence 2 or 3)."""
+    name = lead.get("name", "Business Owner")
+    niche = lead.get("niche", "")
+    city = lead.get("city", "")
+    industry = detect_industry(niche)
+    angles = INDUSTRY_ANGLES.get(industry, INDUSTRY_ANGLES["default"])
+    days_since = lead.get("days_since_contact", "a few")
+
+    if sequence_num == 2:
+        # Value-add follow-up
+        prompt = """Write a SHORT follow-up email (sequence #{seq}) for a local business that hasn't replied to my initial outreach.
+
+BUSINESS: {name} ({industry} in {city})
+DAYS SINCE LAST EMAIL: {days}
+INDUSTRY PAIN POINTS: {pain_points}
+
+This is the VALUE-ADD follow-up. Include:
+- Brief reference to your previous email (1 sentence)
+- Share ONE specific, actionable tip they can implement themselves (related to their industry)
+- Example: "One quick win: add your hours to Google My Business if you haven't -- businesses with complete profiles get 7x more clicks"
+- Keep it under 100 words
+- End with: "Happy to help if you'd like more ideas. No strings attached."
+- Sign from: Charles G, Twin Cities Web Co
+
+FORMAT:
+SUBJECT: [follow-up subject line]
+BODY:
+[email body]""".format(
+            seq=sequence_num, name=name, industry=industry, city=city,
+            days=days_since, pain_points=", ".join(angles["pain_points"]),
+        )
+    else:
+        # Break-up email (sequence 3)
+        prompt = """Write a FINAL break-up email (sequence #{seq}) for a local business that hasn't replied to 2 previous emails.
+
+BUSINESS: {name} ({industry} in {city})
+
+This is the BREAK-UP email. Keep it:
+- Ultra short (3-4 sentences max)
+- Respectful and professional
+- "I don't want to be a pest" tone
+- Mention you won't email again unless they reach out
+- Leave the door open: "If timing is ever right, I'm here"
+- Sign from: Charles G, Twin Cities Web Co
+
+FORMAT:
+SUBJECT: [break-up subject line]
+BODY:
+[email body]""".format(seq=sequence_num, name=name, industry=industry, city=city)
+
+    response = _call_claude(prompt, max_tokens=800)
+    if not response:
+        return None
+
+    # Parse
+    subject = ""
+    body = ""
+    lines = response.strip().split("\n")
+    in_body = False
+    body_lines = []
+
+    for line in lines:
+        if line.startswith("SUBJECT:"):
+            subject = line.replace("SUBJECT:", "").strip()
+        elif line.startswith("BODY:"):
+            in_body = True
+        elif in_body:
+            body_lines.append(line)
+
+    body = "\n".join(body_lines).strip()
+    if not body:
+        body = response.strip()
+        subject = "Following up - {}".format(name)
+
+    body += CAN_SPAM_FOOTER
+
+    return {
+        "lead_name": name,
+        "to_email": lead.get("email", ""),
+        "from_email": GMAIL_ADDRESS,
+        "subject_a": subject,
+        "subject_b": subject,  # Same subject for follow-ups
+        "body": body,
+        "niche": niche,
+        "city": city,
+        "score": lead.get("score", 0),
+        "industry": industry,
+        "sequence_num": sequence_num,
+        "generated_at": datetime.datetime.now().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Email validation
 # ---------------------------------------------------------------------------
 
 def validate_email(email):
-    """
-    Basic email validation:
-    1. Format check (regex)
-    2. Domain has MX or A record (DNS check)
-    Returns (is_valid: bool, reason: str)
-    """
+    """Basic email validation with format + DNS check."""
     if not email or not isinstance(email, str):
         return False, "empty email"
 
     email = email.strip().lower()
-
-    # Format check
     pattern = r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$'
     if not re.match(pattern, email):
         return False, "invalid format"
 
-    # Check for obviously fake domains
     domain = email.split("@")[1]
-    fake_domains = {
-        "example.com", "example.org", "test.com", "fake.com",
-        "noemail.com", "none.com", "na.com",
-    }
+    fake_domains = {"example.com", "example.org", "test.com", "fake.com", "noemail.com", "none.com", "na.com"}
     if domain in fake_domains:
         return False, "fake domain"
 
-    # DNS check for MX record
     try:
         import socket
         socket.getaddrinfo(domain, None)
@@ -95,436 +413,149 @@ def validate_email(email):
     except socket.gaierror:
         return False, "domain does not resolve"
     except Exception:
-        # If DNS check fails for any reason, still allow (might be network issue in CI)
         return True, "dns check skipped"
 
 
 # ---------------------------------------------------------------------------
-# AI email generation
+# Main email bot pipeline
 # ---------------------------------------------------------------------------
-
-def generate_email(lead):
-    """
-    Call Claude claude-3-5-haiku to generate a personalized cold email
-    for a local business lead.
-
-    Returns a dict with keys: 'subject' and 'body'.
-    Falls back to a template if no API key is set or the call fails.
-    """
-    name = lead.get("name", "there")
-    niche = lead.get("niche", "business")
-    city = lead.get("city", "your city")
-    rating = lead.get("rating", "")
-    reviews = lead.get("reviews", "")
-    website = (lead.get("website") or "").strip()
-    has_website = bool(website)
-    phone = (lead.get("phone") or "").strip()
-    source = lead.get("source", "online directory")
-
-    # Build context-aware service angle
-    if not has_website:
-        service_angle = "build you a professional website so customers can find you online"
-        pain_point = "Many customers search online before calling -- without a website, you may be losing jobs to competitors every week."
-    elif rating and float(rating) < 3.5:
-        service_angle = "help you manage and improve your online reputation"
-        pain_point = "A low star rating can quietly cost you 30-40% of potential customers before they even call."
-    else:
-        service_angle = "strengthen your online presence and bring in more local customers"
-        pain_point = "In today's market, the businesses that show up first online win most of the calls."
-
-    prompt = (
-        "You are a friendly, local digital marketing consultant based in the Twin Cities, MN. "
-        "Write a short, genuine cold email to a local business owner. "
-        "Do NOT use hype, all-caps, or pushy sales language. Sound like a real neighbor, not a bot.\n\n"
-        "Business details:\n"
-        "- Business name: {name}\n"
-        "- Industry/niche: {niche}\n"
-        "- City: {city}\n"
-        "- Google rating: {rating} stars ({reviews} reviews)\n"
-        "- Has website: {has_website}\n"
-        "- Service to offer: {service_angle}\n"
-        "- Pain point to mention: {pain_point}\n\n"
-        "Requirements:\n"
-        "1. Subject line: short, specific, no clickbait (max 60 chars)\n"
-        "2. Email body: 3-4 short paragraphs, under 200 words total\n"
-        "3. Open with a genuine compliment or observation about their business\n"
-        "4. Mention the pain point naturally in one sentence\n"
-        "5. Offer a free 15-minute call or free audit - no commitment\n"
-        "6. Sign off as 'Alex' from 'Twin Cities Web Co'\n"
-        "7. Do NOT include any footer or unsubscribe text (that is added automatically)\n\n"
-        "Respond ONLY with valid JSON in this exact format:\n"
-        "{{\"subject\": \"...\", \"body\": \"...\"}}\n"
-        "Use \\n for line breaks inside the body string."
-    ).format(
-        name=name,
-        niche=niche,
-        city=city,
-        rating=rating,
-        reviews=reviews,
-        has_website=has_website,
-        service_angle=service_angle,
-        pain_point=pain_point,
-    )
-
-    if not ANTHROPIC_API_KEY:
-        print("  [WARN] No ANTHROPIC_API_KEY -- using fallback template email")
-        return _fallback_email(name, niche, city, has_website)
-
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": 512,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-    }
-
-    try:
-        resp = requests.post(ANTHROPIC_ENDPOINT, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        text = data["content"][0]["text"].strip()
-
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
-
-        result = json.loads(text)
-        if "subject" in result and "body" in result:
-            return result
-        raise ValueError("Missing subject or body in Claude response")
-
-    except Exception as exc:
-        print("  [WARN] Claude API error: {} -- using fallback template".format(exc))
-        return _fallback_email(name, niche, city, has_website)
-
-
-def _fallback_email(name, niche, city, has_website):
-    """Plain-text template used when Anthropic API is unavailable."""
-    if not has_website:
-        subject = "Quick question about {}'s online presence".format(name)
-        body = (
-            "Hi there,\n\n"
-            "I came across {} while looking for {} services in {} and noticed you "
-            "don't have a website yet.\n\n"
-            "A lot of customers search online before they call -- a simple, professional "
-            "site can make a real difference in how many new jobs you land each week.\n\n"
-            "I help local businesses in the Twin Cities get set up online quickly and "
-            "affordably. Would you be open to a free 15-minute call to see if it could "
-            "be a good fit?\n\n"
-            "No pressure at all -- just a quick chat.\n\n"
-            "Best,\nAlex\nTwin Cities Web Co"
-        ).format(name, niche, city)
-    else:
-        subject = "Helping {} attract more local customers".format(name)
-        body = (
-            "Hi there,\n\n"
-            "I found {} while researching {} businesses in {} -- looks like you've "
-            "been serving the community for a while.\n\n"
-            "I help local businesses improve their online presence so more customers "
-            "find them first on Google. Even small tweaks can bring in a few extra "
-            "calls per week.\n\n"
-            "Would you be open to a free 15-minute audit? I'll tell you exactly what's "
-            "working and what could be improved -- no strings attached.\n\n"
-            "Best,\nAlex\nTwin Cities Web Co"
-        ).format(name, niche, city)
-    return {"subject": subject, "body": body}
-
-
-# ---------------------------------------------------------------------------
-# CAN-SPAM compliant email body builder
-# ---------------------------------------------------------------------------
-
-def build_compliant_body(body):
-    """
-    Append the CAN-SPAM required footer to the email body.
-    Includes physical address and unsubscribe mechanism.
-    """
-    return body + CAN_SPAM_FOOTER
-
-
-# ---------------------------------------------------------------------------
-# Email sender (ONLY called after Telegram approval)
-# ---------------------------------------------------------------------------
-
-def send_approved_email(to_address, subject, body):
-    """
-    Send a single approved email via Gmail SMTP.
-    This is ONLY called when a lead is approved via Telegram.
-    The body should already include the CAN-SPAM footer.
-
-    NOTE: Uses Gmail SMTP with App Password. Since we only send
-    approved emails (not bulk), this stays within Gmail's acceptable
-    use policy.
-
-    Returns True on success, False on failure.
-    """
-    gmail_app_password = os.getenv("GMAIL_APP_PASSWORD", "")
-
-    if not GMAIL_ADDRESS:
-        print("  [ERROR] GMAIL_ADDRESS not set")
-        return False
-
-    if not gmail_app_password:
-        # If no app password, save as draft instead of sending
-        print("  [INFO] No GMAIL_APP_PASSWORD -- email saved as draft only")
-        return False
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = "{} <{}>".format("Alex | Twin Cities Web Co", GMAIL_ADDRESS)
-    msg["To"] = to_address
-    msg["Reply-To"] = GMAIL_ADDRESS
-
-    part = MIMEText(body, "plain")
-    msg.attach(part)
-
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(GMAIL_ADDRESS, gmail_app_password)
-            server.sendmail(GMAIL_ADDRESS, to_address, msg.as_string())
-        print("  [SENT] {} -> {}".format(subject[:50], to_address))
-        return True
-    except smtplib.SMTPException as exc:
-        print("  [FAIL] SMTP error sending to {}: {}".format(to_address, exc))
-        return False
-    except Exception as exc:
-        print("  [FAIL] Unexpected error sending to {}: {}".format(to_address, exc))
-        return False
-
-
-# ---------------------------------------------------------------------------
-# CSV helpers
-# ---------------------------------------------------------------------------
-
-def load_leads():
-    """
-    Read leads.csv and return rows where status == 'new' and email is not empty.
-    Returns a list of dicts.
-    """
-    if not os.path.exists(LEADS_FILE):
-        print("[WARN] {} not found -- run lead_scraper.py first".format(LEADS_FILE))
-        return []
-
-    leads = []
-    try:
-        with open(LEADS_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                status = (row.get("status") or "").strip().lower()
-                email = (row.get("email") or "").strip()
-                if status == "new" and email:
-                    leads.append(row)
-    except Exception as exc:
-        print("[ERROR] Could not read {}: {}".format(LEADS_FILE, exc))
-
-    return leads
-
-
-def mark_contacted(lead, subject):
-    """
-    1. Append the lead to contacted.csv.
-    2. Update the lead's status to 'sent' in leads.csv.
-    """
-    file_exists = os.path.exists(CONTACTED_FILE)
-    try:
-        with open(CONTACTED_FILE, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=CONTACTED_COLUMNS)
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow({
-                "name": lead.get("name", ""),
-                "email": lead.get("email", ""),
-                "niche": lead.get("niche", ""),
-                "city": lead.get("city", ""),
-                "score": lead.get("score", ""),
-                "sent_date": datetime.date.today().isoformat(),
-                "subject": subject,
-            })
-    except Exception as exc:
-        print("  [WARN] Could not write to {}: {}".format(CONTACTED_FILE, exc))
-
-    _update_lead_status(lead.get("name", ""), "sent")
-
-
-def mark_draft_ready(lead_name):
-    """Update the lead's status to 'draft_ready' in leads.csv."""
-    _update_lead_status(lead_name, "draft_ready")
-
-
-def _update_lead_status(name, new_status):
-    """
-    Rewrite leads.csv updating the row matching `name` to `new_status`.
-    Uses a temp file to avoid data loss on error.
-    """
-    if not os.path.exists(LEADS_FILE):
-        return
-
-    try:
-        rows = []
-        fieldnames = None
-        with open(LEADS_FILE, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames
-            for row in reader:
-                if (row.get("name") or "").strip().lower() == name.strip().lower():
-                    row["status"] = new_status
-                rows.append(row)
-
-        if fieldnames is None:
-            return
-
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".csv")
-        os.close(tmp_fd)
-        with open(tmp_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
-
-        shutil.move(tmp_path, LEADS_FILE)
-
-    except Exception as exc:
-        print("  [WARN] Could not update status in {}: {}".format(LEADS_FILE, exc))
-
-
-# ---------------------------------------------------------------------------
-# Draft generation pipeline (replaces the old auto-send pipeline)
-# ---------------------------------------------------------------------------
-
-def save_drafts(drafts):
-    """Save draft emails to drafts.json for the Telegram approval flow."""
-    try:
-        with open(DRAFTS_FILE, "w", encoding="utf-8") as f:
-            json.dump(drafts, f, indent=2, ensure_ascii=False)
-        print("[INFO] {} drafts saved to {}".format(len(drafts), DRAFTS_FILE))
-    except Exception as exc:
-        print("[ERROR] Could not save drafts: {}".format(exc))
-
-
-def load_drafts():
-    """Load draft emails from drafts.json."""
-    if not os.path.exists(DRAFTS_FILE):
-        return []
-    try:
-        with open(DRAFTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as exc:
-        print("[ERROR] Could not load drafts: {}".format(exc))
-        return []
-
 
 def run_email_bot():
     """
-    Draft generation pipeline (NO auto-sending):
-      1. Load new leads with emails from leads.csv
-      2. Cap at MAX_DRAFTS_PER_RUN
-      3. Validate each email address
-      4. Generate AI-personalized email draft
-      5. Append CAN-SPAM footer
-      6. Save all drafts to drafts.json
-      7. Mark leads as 'draft_ready'
-      8. Return list of draft dicts for Telegram notification
-
-    Returns (drafts: list, skipped: int)
+    Generate email drafts for qualified leads.
+    Returns: (drafts_list, skipped_count)
     """
-    print("\n" + "=" * 60)
-    print("EMAIL BOT v2 -- Generating drafts (no auto-send)")
-    print("=" * 60)
+    # Get qualified leads from Sheets
+    if sheets_connected():
+        leads = get_leads_by_stage("qualified")
+    else:
+        # CSV fallback
+        leads = _load_csv_leads()
 
-    leads = load_leads()
-    if not leads:
-        print("[INFO] No actionable leads found. Exiting.")
-        return [], 0
-
-    batch = leads[:MAX_DRAFTS_PER_RUN]
-    print("[INFO] {} leads available, generating up to {} drafts".format(
-        len(leads), MAX_DRAFTS_PER_RUN
-    ))
+    print("[EMAIL] Found {} qualified leads for drafting".format(len(leads)))
 
     drafts = []
     skipped = 0
+    processed = 0
 
-    for idx, lead in enumerate(batch, 1):
+    for lead in leads:
+        if processed >= MAX_DRAFTS_PER_RUN:
+            print("[EMAIL] Hit max drafts per run ({})".format(MAX_DRAFTS_PER_RUN))
+            break
+
+        email = lead.get("email", "")
         name = lead.get("name", "Unknown")
-        email = (lead.get("email") or "").strip()
-
-        print("\n[{}/{}] Processing: {} <{}>".format(idx, len(batch), name, email))
 
         # Validate email
         is_valid, reason = validate_email(email)
         if not is_valid:
-            print("  [SKIP] Invalid email ({}): {}".format(reason, email))
-            _update_lead_status(name, "invalid_email")
+            print("[EMAIL] Skipping {} -- {} ({})".format(name, reason, email))
             skipped += 1
             continue
 
-        # Generate personalized email
-        print("  [AI] Generating email draft...")
-        email_content = generate_email(lead)
-        subject = email_content.get("subject", "Helping your business online")
-        body = email_content.get("body", "")
+        # Scrape reviews for personalization
+        reviews = scrape_google_reviews(name, lead.get("city", ""))
 
-        if not body:
-            print("  [SKIP] Empty email body generated -- skipping")
-            skipped += 1
-            continue
+        # Generate initial draft with A/B subjects
+        draft = generate_initial_draft(lead, reviews)
+        if draft:
+            drafts.append(draft)
+            processed += 1
 
-        # Add CAN-SPAM footer
-        compliant_body = build_compliant_body(body)
+            # Update lead stage in Sheets
+            if sheets_connected():
+                update_lead_multiple_fields(
+                    name, lead.get("city", ""),
+                    {
+                        "pipeline_stage": "draft_ready",
+                        "subject_line_a": draft.get("subject_a", ""),
+                        "subject_line_b": draft.get("subject_b", ""),
+                    }
+                )
 
-        draft = {
-            "lead_name": name,
-            "to_email": email,
-            "subject": subject,
-            "body": compliant_body,
-            "niche": lead.get("niche", ""),
-            "city": lead.get("city", ""),
-            "score": lead.get("score", 0),
-            "rating": lead.get("rating", ""),
-            "reviews": lead.get("reviews", ""),
-            "website": lead.get("website", ""),
-            "phone": lead.get("phone", ""),
-            "source": lead.get("source", ""),
-            "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
-            "status": "pending_approval",
-        }
-        drafts.append(draft)
-        mark_draft_ready(name)
-
-        print("  [DRAFT] '{}' -> {}".format(subject[:50], email))
-
-        # Small delay between AI calls to be nice to the API
-        if idx < len(batch):
+            # Rate limit Claude calls
             time.sleep(1)
+        else:
+            skipped += 1
 
-    # Save all drafts
-    if drafts:
-        save_drafts(drafts)
-
-    print("\n" + "=" * 60)
-    print("EMAIL BOT v2 COMPLETE: {} drafts generated, {} skipped".format(
-        len(drafts), skipped
-    ))
-    print("Drafts are saved to {} -- awaiting Telegram approval".format(DRAFTS_FILE))
-    print("=" * 60)
-
+    print("[EMAIL] Generated {} drafts, skipped {}".format(len(drafts), skipped))
     return drafts, skipped
 
 
+def run_followup_bot():
+    """
+    Generate follow-up drafts for leads that haven't replied.
+    Returns: (followup_drafts_list, skipped_count)
+    """
+    if not sheets_connected():
+        print("[EMAIL] Sheets not connected -- skipping follow-ups")
+        return [], 0
+
+    rules = FOLLOW_UP_RULES
+    followup_drafts = []
+    skipped = 0
+
+    # Check for leads needing first follow-up (3+ days since contact)
+    leads_f1 = get_leads_needing_followup(rules["first_follow_up_days"])
+    leads_f1 = [l for l in leads_f1 if l.get("pipeline_stage") == "contacted"]
+
+    # Check for leads needing second follow-up (7+ days since last follow-up)
+    leads_f2 = get_leads_needing_followup(rules["second_follow_up_days"])
+    leads_f2 = [l for l in leads_f2 if l.get("pipeline_stage") == "follow_up_1"]
+
+    print("[EMAIL] Follow-up candidates: {} first, {} second".format(len(leads_f1), len(leads_f2)))
+
+    for lead in leads_f1:
+        email = lead.get("email", "")
+        is_valid, _ = validate_email(email)
+        if not is_valid:
+            skipped += 1
+            continue
+
+        draft = generate_followup_draft(lead, sequence_num=2)
+        if draft:
+            followup_drafts.append(draft)
+            time.sleep(1)
+        else:
+            skipped += 1
+
+    for lead in leads_f2:
+        email = lead.get("email", "")
+        is_valid, _ = validate_email(email)
+        if not is_valid:
+            skipped += 1
+            continue
+
+        draft = generate_followup_draft(lead, sequence_num=3)
+        if draft:
+            followup_drafts.append(draft)
+            time.sleep(1)
+        else:
+            skipped += 1
+
+    print("[EMAIL] Generated {} follow-up drafts, skipped {}".format(
+        len(followup_drafts), skipped))
+    return followup_drafts, skipped
+
+
 # ---------------------------------------------------------------------------
-# Entry point
+# CSV fallback
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    drafts, skipped = run_email_bot()
-    print("\nFinal: {} drafts ready for approval, {} skipped".format(
-        len(drafts), skipped
-    ))
+def _load_csv_leads():
+    """Load qualified leads from CSV fallback."""
+    csv_file = "leads.csv"
+    if not os.path.exists(csv_file):
+        return []
+
+    leads = []
+    try:
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("status") == "qualified":
+                    leads.append(row)
+    except Exception as e:
+        print("[EMAIL] CSV load error: {}".format(e))
+
+    return leads
