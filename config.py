@@ -12,8 +12,9 @@ import json
 # ---------------------------------------------------------------------------
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")  # For IMAP reply tracking
+NEBULA_WEBHOOK_URL = os.getenv("NEBULA_WEBHOOK_URL", "")
+NEBULA_WEBHOOK_SECRET = os.getenv("NEBULA_WEBHOOK_SECRET", "")
+NEBULA_FROM_EMAIL = "charles-smith@nebula.me"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
