@@ -25,7 +25,7 @@ except ImportError:
 
 from config import (
     ANTHROPIC_API_KEY, ANTHROPIC_ENDPOINT, ANTHROPIC_MODEL,
-    GMAIL_ADDRESS, GMAIL_APP_PASSWORD, MAX_DRAFTS_PER_RUN, CAN_SPAM_FOOTER,
+    NEBULA_WEBHOOK_URL, NEBULA_WEBHOOK_SECRET, NEBULA_FROM_EMAIL, MAX_DRAFTS_PER_RUN, CAN_SPAM_FOOTER,
     INDUSTRY_ANGLES, MIN_SCORE_FOR_DRAFT, FOLLOW_UP_RULES,
     EMAIL_WARMUP_SCHEDULE, EMAIL_MAX_PER_DAY_DEFAULT,
     EMAIL_SEND_DAYS, EMAIL_SEND_HOURS, EMAIL_SEND_TIMEZONE,
@@ -498,122 +498,14 @@ def validate_email(email):
 
 def check_gmail_replies(contacted_leads):
     """
-    Check Gmail inbox for replies to outreach emails.
-    Uses IMAP to search for messages FROM any lead's email address.
-    Returns list of dicts: [{"name": ..., "city": ..., "reply_subject": ..., "reply_date": ...}]
+    Reply tracking stub -- IMAP disabled after migration to Nebula email.
+    Returns empty list. Reply detection now requires manual inbox checks
+    or future Nebula inbox API integration.
     """
-    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
-        print("[REPLY-TRACK] Skipping -- GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set")
-        return []
-
-    if not contacted_leads:
-        print("[REPLY-TRACK] No contacted leads to check")
-        return []
-
-    # Build lookup: email -> lead info
-    email_to_lead = {}
-    for lead in contacted_leads:
-        lead_email = lead.get("email", "").strip().lower()
-        if lead_email:
-            email_to_lead[lead_email] = {
-                "name": lead.get("name", ""),
-                "city": lead.get("city", ""),
-            }
-
-    if not email_to_lead:
-        print("[REPLY-TRACK] No valid email addresses in contacted leads")
-        return []
-
-    replies_found = []
-
-    try:
-        print("[REPLY-TRACK] Connecting to Gmail IMAP...")
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        mail.select("INBOX", readonly=True)
-
-        # Search for replies from each contacted lead's email
-        for lead_email, lead_info in email_to_lead.items():
-            try:
-                # Search for emails FROM this lead address in the last 30 days
-                since_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%d-%b-%Y")
-                search_criteria = '(FROM "{}" SINCE {})'.format(lead_email, since_date)
-                status, message_ids = mail.search(None, search_criteria)
-
-                if status != "OK" or not message_ids[0]:
-                    continue
-
-                # Found replies from this lead
-                ids = message_ids[0].split()
-                # Just grab the most recent reply
-                latest_id = ids[-1]
-                status, msg_data = mail.fetch(latest_id, "(RFC822)")
-
-                if status != "OK":
-                    continue
-
-                raw_email = msg_data[0][1]
-                msg = email_lib.message_from_bytes(raw_email)
-
-                # Decode subject
-                subject_header = msg.get("Subject", "(no subject)")
-                decoded_parts = decode_header(subject_header)
-                subject = ""
-                for part, encoding in decoded_parts:
-                    if isinstance(part, bytes):
-                        subject += part.decode(encoding or "utf-8", errors="replace")
-                    else:
-                        subject += part
-
-                reply_date = msg.get("Date", "")
-
-                # Check if the reply is an unsubscribe request
-                body_text = ""
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        if part.get_content_type() == "text/plain":
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                body_text = payload.decode("utf-8", errors="replace")
-                                break
-                else:
-                    payload = msg.get_payload(decode=True)
-                    if payload:
-                        body_text = payload.decode("utf-8", errors="replace")
-
-                is_unsub = any(kw in body_text.lower() for kw in [
-                    "unsubscribe", "stop emailing", "remove me",
-                    "opt out", "opt-out", "do not contact",
-                    "take me off", "no more emails",
-                ]) or any(kw in subject.lower() for kw in [
-                    "unsubscribe", "stop", "remove",
-                ])
-
-                replies_found.append({
-                    "name": lead_info["name"],
-                    "city": lead_info["city"],
-                    "email": lead_email,
-                    "reply_subject": subject[:100],
-                    "reply_date": reply_date,
-                    "is_unsubscribe": is_unsub,
-                })
-
-                print("[REPLY-TRACK] Reply found from {} <{}>".format(
-                    lead_info["name"], lead_email))
-
-            except Exception as e:
-                print("[REPLY-TRACK] Error checking {}: {}".format(lead_email, e))
-                continue
-
-        mail.logout()
-        print("[REPLY-TRACK] Done -- {} replies found".format(len(replies_found)))
-
-    except imaplib.IMAP4.error as e:
-        print("[REPLY-TRACK] IMAP login failed: {} -- check GMAIL_APP_PASSWORD".format(e))
-    except Exception as e:
-        print("[REPLY-TRACK] Error: {}".format(e))
-
-    return replies_found
+    print("[REPLY-TRACK] Reply tracking via IMAP is disabled (migrated to Nebula email).")
+    print("[REPLY-TRACK] Check charles-smith@nebula.me inbox manually for replies.")
+    print("[REPLY-TRACK] Skipping reply check for {} contacted leads.".format(len(contacted_leads) if contacted_leads else 0))
+    return []
 
 # ---------------------------------------------------------------------------
 # Email Deliverability Helpers
@@ -722,16 +614,10 @@ def detect_bounce(msg):
     }
 
 def check_spf_dkim_warning():
-    """
-    Print a warning at startup if SPF/DKIM might not be configured.
-    This is advisory only -- we can't verify from the sender side.
-    """
-    print("[DELIVER] === DELIVERABILITY CHECKLIST ===")
-    print("[DELIVER] Ensure your Gmail account has:")
-    print("[DELIVER]   1. SPF record configured for your domain")
-    print("[DELIVER]   2. DKIM signing enabled")
-    print("[DELIVER]   3. DMARC policy set")
-    print("[DELIVER]   4. Gmail App Password (not regular password)")
+    """Print startup info for Nebula email sending."""
+    print("[DELIVER] === NEBULA EMAIL CONFIG ===")
+    print("[DELIVER] Sending via: {}".format(NEBULA_FROM_EMAIL))
+    print("[DELIVER] Webhook: {}".format("configured" if NEBULA_WEBHOOK_URL else "NOT SET"))
     if EMAIL_WARMUP_START:
         limit = get_daily_send_limit()
         print("[DELIVER] Warm-up active since {}. Today's limit: {} emails/day".format(
@@ -790,6 +676,7 @@ def _wrap_links_for_tracking(html_body, lead_email):
 
     import re as _re
     return _re.sub(r'href="(https?://[^"]+)"', replace_link, html_body)
+
 
 def get_ab_winner(contacted_leads):
     """Analyze A/B subject line performance and return the winning variant.
@@ -870,12 +757,12 @@ def select_subject_variant(draft, ab_result=None):
 
 def send_approved_email(draft):
     """
-    Send a single approved email via Gmail SMTP.
-    Uses GMAIL_ADDRESS + GMAIL_APP_PASSWORD from config.
+    Send a single approved email via Nebula webhook.
+    POSTs to Nebula's webhook endpoint which sends via charles-smith@nebula.me.
     Returns dict with send result or None on failure.
     """
-    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
-        print("[SEND] Skipping -- GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set")
+    if not NEBULA_WEBHOOK_URL or not NEBULA_WEBHOOK_SECRET:
+        print("[SEND] Skipping -- NEBULA_WEBHOOK_URL or NEBULA_WEBHOOK_SECRET not set")
         return None
 
     to_email = draft.get("to_email", "")
@@ -895,31 +782,42 @@ def send_approved_email(draft):
         return None
 
     try:
-        # Build MIME message
-        msg = MIMEMultipart("alternative")
-        msg["From"] = GMAIL_ADDRESS
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        msg["Reply-To"] = GMAIL_ADDRESS
-
-        # Plain text version
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-
-        # HTML version with tracking pixel + link tracking
+        # Build HTML body with tracking
         html_body = "<html><body><pre style='font-family: Arial, sans-serif; white-space: pre-wrap;'>{}</pre>".format(
             body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
         html_body, pixel_url = _inject_tracking_pixel(html_body, to_email)
         html_body = _wrap_links_for_tracking(html_body + "</body></html>", to_email)
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-        # Connect and send
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_ADDRESS, to_email, msg.as_string())
-        server.quit()
+        # Build full email body (plain text + HTML note)
+        full_body = body + "\n\n<!-- HTML version -->\n" + html_body
 
-        print("[SEND] Sent to {} <{}>".format(draft.get("lead_name", "?"), to_email))
+        # Sign the request with HMAC-SHA256
+        import hmac as _hmac
+        payload = json.dumps({"to": to_email, "subject": subject, "body": full_body})
+        signature = _hmac.new(
+            NEBULA_WEBHOOK_SECRET.encode(),
+            payload.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        # POST to Nebula webhook
+        resp = requests.post(
+            NEBULA_WEBHOOK_URL,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Secret": NEBULA_WEBHOOK_SECRET,
+                "X-Webhook-Signature": signature,
+            },
+            timeout=30,
+        )
+
+        if resp.status_code not in (200, 201, 202):
+            print("[SEND] Nebula webhook error {}: {}".format(resp.status_code, resp.text[:200]))
+            return None
+
+        print("[SEND] Sent to {} <{}> via Nebula webhook".format(draft.get("lead_name", "?"), to_email))
 
         return {
             "name": draft.get("lead_name", ""),
@@ -941,11 +839,8 @@ def send_approved_email(draft):
             "engagement_score": "0",
         }
 
-    except smtplib.SMTPAuthenticationError as e:
-        print("[SEND] Auth failed -- check GMAIL_APP_PASSWORD: {}".format(e))
-        return None
-    except smtplib.SMTPRecipientsRefused as e:
-        print("[SEND] Recipient refused {}: {}".format(to_email, e))
+    except requests.exceptions.Timeout:
+        print("[SEND] Nebula webhook timeout for {}".format(to_email))
         return None
     except Exception as e:
         print("[SEND] Error sending to {}: {}".format(to_email, e))
