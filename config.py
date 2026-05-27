@@ -14,7 +14,7 @@ import json
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 NEBULA_WEBHOOK_URL = os.getenv("NEBULA_WEBHOOK_URL", "")
 NEBULA_WEBHOOK_SECRET = os.getenv("NEBULA_WEBHOOK_SECRET", "")
-NEBULA_FROM_EMAIL = "charles-smith@nebula.me"
+NEBULA_FROM_EMAIL = "xxx@xxx.com"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
@@ -263,7 +263,7 @@ CONTACT_PATHS = ["/contact", "/contact-us", "/about", "/about-us", "/connect"]
 
 CAN_SPAM_FOOTER = (
     "\n\n---\n"
-    "Twin Cities Web Co | Saint Paul, MN 55104\n"
+    "XXX Web Co | XXX, MN XXXXX\n"
     "You're receiving this because your business was found in a public directory.\n"
     "To stop future emails, reply with 'unsubscribe' and we'll remove you immediately.\n"
     "This is a one-time outreach -- we do not send follow-ups without your permission."
