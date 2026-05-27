@@ -1,4 +1,4 @@
-# LeadGen Bot v5 -- Twin Cities Web Co
+# LeadGen Bot v5 -- XXX Web Co
 
 Automated local business lead generation, AI-powered cold email outreach, and CRM pipeline management for web services in the Twin Cities metro area.
 
@@ -31,7 +31,7 @@ site/index.html      -- Landing page with Tailwind CSS + Schema.org (309 lines)
 ## Pipeline (10 Steps)
 
 | Step | What | Details |
-|------|------|--------|
+|------|------|--------
 | 1 | Scrape | Google Maps + Yelp + Facebook + Bing with health tracking |
 | 2 | Notify | Telegram summary of leads found |
 | 3 | Draft | Claude AI generates emails with A/B subjects |
@@ -119,7 +119,7 @@ GOOGLE_SHEET_ID          -- Google Sheets spreadsheet ID
 GOOGLE_SHEETS_CREDENTIALS -- Service account JSON (stringified)
 SERPAPI_KEY              -- Optional: SerpAPI fallback
 TRACKING_PIXEL_BASE_URL  -- Optional: hosted tracking pixel endpoint
-LINK_TRACKER_BASE_URL    -- Optional: link redirect tracker endpoint
+LINK_TRACKER_BASE_URL  -- Optional: link redirect tracker endpoint
 EMAIL_WARMUP_START       -- ISO date when sending started (e.g., 2026-03-09)
 ```
 
@@ -138,7 +138,7 @@ python main.py
 ## Google Sheets Structure
 
 | Tab | Purpose |
-|-----|--------|
+|-----|--------
 | Sheet1 (Leads) | All discovered leads with scores, enrichment data, pipeline stage |
 | Contacted | Sent email history with A/B variant, open/click/reply tracking |
 | Config | Custom search queries, cities, niches (overrides fallbacks) |
@@ -157,4 +157,4 @@ python main.py
 MIT
 
 ---
-*Built by Charles G / Twin Cities Web Co / Saint Paul, MN*
+*Built by XXX / XXX Web Co / XXX, MN*
